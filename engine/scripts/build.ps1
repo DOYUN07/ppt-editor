@@ -89,6 +89,7 @@ function AddText($slide, [string]$text, $l, $t, $w, $h, $size, $color, [bool]$bo
   $tr.Font.Color.ObjectThemeColor = $color
   $tr.ParagraphFormat.Alignment = $align
   $tr.ParagraphFormat.SpaceWithin = 1.1
+  $tr.ParagraphFormat.WordWrap = -1   # Korean: break lines between words, not inside them
   return $s
 }
 function AddBox($slide, $shapeType, $l, $t, $w, $h, $fill, $radius=$RADIUS) {
@@ -186,7 +187,7 @@ function CoverDeco($ct) {
     'circles' {
       $d1 = AddBox $ct 9 (MX 600 470) 170 470 470 $A2; $d1.Fill.Transparency = 0.25
       $null = AddBox $ct 9 (MX 770 150) 70 150 150 $A1
-      $null = Outline $ct 9 (MX 560 110) 380 110 110 $A3
+      $null = Outline $ct 9 (MX 660 100) 400 100 100 $A3
     }
     'split' {
       $null = AddBox $ct 1 (MX 620 340) 0 340 540 $A1
@@ -211,7 +212,7 @@ $tmp = Join-Path $env:TEMP ('ppt-build-' + [guid]::NewGuid().ToString('N').Subst
 New-Item -ItemType Directory -Force $tmp | Out-Null
 try {
   $pres = $app.Presentations.Add(-1)
-  try { $app.WindowState = 2 } catch {}
+  try { if ($app.Presentations.Count -le 1) { $app.WindowState = 2 } } catch {}
   $pres.PageSetup.SlideWidth = 960
   $pres.PageSetup.SlideHeight = 540
   $master = $pres.SlideMaster
@@ -236,6 +237,7 @@ try {
   $r = $mt.TextFrame.TextRange
   $r.Font.Size = [single]$titleSize; $r.Font.Bold = -1; $r.Font.Color.ObjectThemeColor = $TX2
   $r.ParagraphFormat.Alignment = $TA
+  $r.ParagraphFormat.WordWrap = -1
   $mb = GetPh $master @(2)
   Pos $mb 48 120 864 360
   $mb.TextFrame.MarginLeft = 0
@@ -250,6 +252,7 @@ try {
     if ($motif -eq 'circle') { $p.ParagraphFormat.Bullet.Character = 9679 } else { $p.ParagraphFormat.Bullet.Character = 9632 }
     $p.ParagraphFormat.Bullet.RelativeSize = 0.6
     $p.ParagraphFormat.Bullet.Font.Color.ObjectThemeColor = $A1
+    $p.ParagraphFormat.WordWrap = -1
   }
   $footLeft = 62
   if ($logo -and (Has $logo 'color')) {
@@ -288,7 +291,7 @@ try {
   Pos $t $COVER_X $CT.titleY $COVER_TW 130
   $t.TextFrame.MarginLeft = 0; $t.TextFrame.VerticalAnchor = 4
   $tr = $t.TextFrame.TextRange
-  $tr.Font.Size = 40; $tr.Font.Bold = -1; $tr.ParagraphFormat.Alignment = 1; $tr.ParagraphFormat.SpaceWithin = 1.05
+  $tr.Font.Size = 40; $tr.Font.Bold = -1; $tr.ParagraphFormat.Alignment = 1; $tr.ParagraphFormat.SpaceWithin = 1.05; $tr.ParagraphFormat.WordWrap = -1
   if ($lightCover) { $tr.Font.Color.ObjectThemeColor = $TX2 } else { $tr.Font.Color.ObjectThemeColor = $BG1 }
   $st = GetPh $L1 @(4)
   Pos $st $COVER_X $CT.subY $COVER_TW $CT.subH
@@ -715,6 +718,10 @@ try {
 }
 catch { Write-Output ("BUILD ERROR: " + $_ + " @ " + $_.ScriptStackTrace); exit 1 }
 finally {
-  try { $app.Quit() } catch {}
+  # Never close the user's own PowerPoint: quit only when no other presentation is open.
+  $quit = $false
+  try { if ($app.Presentations.Count -eq 0) { $app.Quit(); $quit = $true } } catch {}
   [System.Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
+  # Wait for PowerPoint to exit so the next job does not attach to an instance that is shutting down.
+  if ($quit) { for ($w = 0; $w -lt 40 -and (Get-Process POWERPNT -ErrorAction SilentlyContinue); $w++) { Start-Sleep -Milliseconds 500 } }
 }
