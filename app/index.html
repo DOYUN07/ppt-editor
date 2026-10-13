@@ -81,6 +81,35 @@
   .seg button.on { background: var(--ui-accent); color: #fff; }
   .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #1F2433; color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 12.5px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; }
   .toast.show { opacity: 1; }
+  .orig { position: fixed; inset: 0; background: var(--ui-bg); z-index: 8; display: flex; flex-direction: column; }
+  .orig[hidden] { display: none; }
+  .orig-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--ui-panel); border-bottom: 1px solid var(--ui-line); flex-wrap: wrap; }
+  .orig-body { flex: 1; display: grid; grid-template-columns: 190px 1fr 360px; min-height: 0; }
+  .orig-list { overflow: auto; padding: 10px; background: #ECEEF3; border-right: 1px solid var(--ui-line); }
+  .orig-list .it { position: relative; margin-bottom: 10px; cursor: pointer; }
+  .orig-list img { width: 100%; display: block; border-radius: 3px; outline: 2px solid transparent; background: #fff; }
+  .orig-list .it.sel img { outline-color: var(--ui-accent); }
+  .orig-list .it.del img { opacity: .3; }
+  .orig-list .tag { position: absolute; top: 4px; left: 4px; background: rgba(20,24,40,.75); color: #fff; font-size: 10.5px; border-radius: 4px; padding: 1px 5px; }
+  .orig-list .tag.mod { left: auto; right: 4px; background: #B45309; }
+  .orig-stage { display: flex; align-items: center; justify-content: center; padding: 20px; min-width: 0; min-height: 0; }
+  .orig-canvas { position: relative; box-shadow: 0 6px 24px rgba(20,24,40,.14); background: #fff; }
+  .orig-canvas img { display: block; width: 100%; height: 100%; }
+  .orig-canvas .hit { position: absolute; border: 1.5px dashed transparent; cursor: pointer; }
+  .orig-canvas .hit:hover { border-color: rgba(48,30,114,.5); background: rgba(48,30,114,.05); }
+  .orig-canvas .hit.on { border: 2px solid var(--ui-accent); background: rgba(48,30,114,.08); }
+  .orig-canvas .hit.mod::after { content: '수정됨'; position: absolute; top: -18px; left: 0; font-size: 10px; background: #B45309; color: #fff; padding: 1px 4px; border-radius: 3px; }
+  .orig-form { overflow: auto; padding: 4px 16px 24px; background: var(--ui-panel); border-left: 1px solid var(--ui-line); }
+  .orig-form .field { border: 1px solid var(--ui-line); border-radius: 8px; padding: 8px; margin-top: 8px; }
+  .orig-form .field.on { border-color: var(--ui-accent); box-shadow: 0 0 0 2px rgba(48,30,114,.12); }
+  .orig-form .field .lbl { font-size: 11.5px; color: var(--ui-muted); margin-bottom: 4px; display: flex; justify-content: space-between; gap: 6px; }
+  .orig-form table { border-collapse: collapse; width: 100%; }
+  .orig-form td { padding: 1px; }
+  .orig-form td input { padding: 3px 4px; font-size: 12px; }
+  .choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .choice button { text-align: left; border: 1px solid var(--ui-line); background: #fff; border-radius: 10px; padding: 14px; cursor: pointer; }
+  .choice button:hover { border-color: var(--ui-accent); }
+  .choice b { display: block; font-size: 14px; margin-bottom: 4px; }
   details.more summary { cursor: pointer; font-size: 12px; color: var(--ui-muted); margin-top: 12px; }
   .slide { position: absolute; left: 0; top: 0; width: 960px; height: 540px; transform-origin: 0 0; overflow: hidden; }
   .slide * { box-sizing: border-box; }
@@ -92,6 +121,8 @@
 <header>
   <h1>PPT 편집기</h1>
   <input type="text" id="fileName" style="max-width:240px" title="파일 이름">
+  <button class="btn" id="importBtn" title="기존 PowerPoint 파일을 가져와서 수정하거나 새 양식으로 바꿔요">PPT 가져오기</button>
+  <input type="file" id="pptFile" accept=".pptx,.ppt,.pptm,.potx" hidden>
   <span class="grow"></span>
   <select id="projectSel" style="width:170px" title="저장된 프로젝트"></select>
   <button class="btn" id="loadProject">불러오기</button>
@@ -193,6 +224,23 @@
   </section>
 </main>
 
+<div class="orig" id="orig" hidden>
+  <div class="orig-head">
+    <b id="origName"></b>
+    <span class="hint" id="origInfo"></span>
+    <span class="grow"></span>
+    <label class="row" style="gap:4px;font-size:12px" title="원본의 테마 색·글꼴을 왼쪽에서 고른 색 조합으로 바꿔요. 테마 색을 쓰는 요소만 바뀌어요."><input type="checkbox" id="origBrand"> 내 색 조합 적용</label>
+    <input type="text" id="origFile" style="width:220px" title="저장할 파일 이름">
+    <button class="btn" id="origToNew">새 양식으로 다시 만들기</button>
+    <button class="btn primary" id="origSave">수정본 저장</button>
+    <button class="btn" id="origClose">닫기</button>
+  </div>
+  <div class="orig-body">
+    <div class="orig-list" id="origList"></div>
+    <div class="orig-stage" id="origStage"><div class="orig-canvas" id="origCanvas"></div></div>
+    <div class="orig-form" id="origForm"></div>
+  </div>
+</div>
 <div class="modal-back" id="modalBack"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
@@ -338,7 +386,7 @@ function frame(c, d, inner, opts = {}) {
 }
 function coverDeco(c) {
   const L = c.L, X = (x, w) => MX(c, x, w);
-  if (L.cover === 'circles') return box(X(600,470),170,470,470,c.v('accent2'),'50%','opacity:.75') + box(X(770,150),70,150,150,c.v('accent1'),'50%') + box(X(560,110),380,110,110,'transparent','50%',`border:1.5px solid ${c.v('accent3')}`);
+  if (L.cover === 'circles') return box(X(600,470),170,470,470,c.v('accent2'),'50%','opacity:.75') + box(X(770,150),70,150,150,c.v('accent1'),'50%') + box(X(660,100),400,100,100,'transparent','50%',`border:1.5px solid ${c.v('accent3')}`);
   if (L.cover === 'split') return box(X(620,340),0,340,540,c.v('accent1')) + M(c,X(680,220),130,220,220,'transparent','border:2px solid #fff') + M(c,X(820,100),300,100,100,c.v('dk2'));
   if (L.cover === 'minimal') return box(X(620,340),0,340,540,c.v('lt2')) + M(c,X(680,200),150,200,200,c.v('accent1')) + M(c,X(800,110),290,110,110,c.v('accent2'),'opacity:.85');
   return M(c,X(650,210),96,210,210,c.v('accent1')) + M(c,X(748,170),236,170,170,c.v('accent2'),'opacity:.85') + M(c,X(618,96),330,96,96,'transparent',`border:1.5px solid ${c.v('accent3')}`);
@@ -736,11 +784,7 @@ async function build() {
     const r = await fetch('/api/build', { method: 'POST', body: JSON.stringify({ fileName: state.fileName || '새 프레젠테이션', potx: $('potx').checked, specJson: JSON.stringify(spec, null, 1), styleJson: JSON.stringify(style), brandJson: JSON.stringify(brand) }) });
     const res = await r.json();
     if (res.ok) {
-      m.innerHTML = `<h3>완성됐어요</h3><div class="hint">${esc(res.out)}${res.potx ? '<br>' + esc(res.potx) : ''}</div>
-        <div class="row" style="margin-top:10px"><button class="btn primary" id="openFile">PowerPoint로 열기</button><button class="btn" id="openFolder">폴더 열기</button><span class="grow"></span><button class="btn" id="closeModal">닫기</button></div>
-        <div class="results">${res.pngs.map(p => `<img src="${p}" alt="">`).join('')}</div>`;
-      $('openFile').onclick = () => fetch('/api/open', { method: 'POST', body: JSON.stringify({ what: 'file', path: res.out }) });
-      $('openFolder').onclick = () => fetch('/api/open', { method: 'POST', body: JSON.stringify({ what: 'folder', path: res.out }) });
+      showResult(res);
       try { const st = await (await fetch('/api/state')).json(); server.history = Array.isArray(st.history) ? st.history : []; } catch (e) {}
     } else {
       m.innerHTML = `<h3>만들지 못했어요</h3><div class="hint">PowerPoint가 응답하지 않거나 내용에 문제가 있을 수 있어요. 아래 기록을 담당자나 Claude에게 보여주면 원인을 찾을 수 있어요.</div><pre class="log">${esc(res.log || res.error || '')}</pre><button class="btn" id="closeModal">닫기</button>`;
@@ -750,6 +794,249 @@ async function build() {
   }
   const cm = $('closeModal'); if (cm) cm.onclick = () => $('modalBack').classList.remove('show');
   build.busy = false; $('buildBtn').disabled = false;
+}
+
+function showResult(res) {
+  const m = $('modal'); $('modalBack').classList.add('show');
+  m.innerHTML = `<h3>완성됐어요</h3><div class="hint">${esc(res.out)}${res.potx ? '<br>' + esc(res.potx) : ''}</div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="openFile">PowerPoint로 열기</button><button class="btn" id="openFolder">폴더 열기</button><span class="grow"></span><button class="btn" id="closeModal">닫기</button></div>
+    ${(res.log || '').includes('WARN') ? `<div class="warn" style="margin-top:8px">일부 항목은 바꾸지 못했어요:<br>${esc(res.log.split('\n').filter(l => l.includes('WARN')).join('\n')).replace(/\n/g, '<br>')}</div>` : ''}
+    <div class="results">${(res.pngs || []).map(p => `<img src="${p}" alt="">`).join('')}</div>`;
+  $('openFile').onclick = () => fetch('/api/open', { method: 'POST', body: JSON.stringify({ what: 'file', path: res.out }) });
+  $('openFolder').onclick = () => fetch('/api/open', { method: 'POST', body: JSON.stringify({ what: 'folder', path: res.out }) });
+  $('closeModal').onclick = () => $('modalBack').classList.remove('show');
+}
+
+// ---------------- import existing presentations ----------------
+let imp = null;          // { id, name, dir, info, edits: { [slideIndex]: { delete, notes, shapes: { key: {...} } } }, sel, shape }
+const SOFT = '↵';  // soft line break inside a paragraph (shown as ↵)
+const shapeText = s => (s.paragraphs || []).map(p => p.text).join('\n');
+const isJunk = s => [13, 15, 16].includes(s.ph) || /^(\d{1,2}|STEP\s*\d+|[—→•·\-↵]*)$/i.test(shapeText(s).trim());
+const impUrl = (kind, file) => `/imports/${imp.id}/${kind}/${file}`;
+
+async function importPpt(file) {
+  const m = $('modal'); $('modalBack').classList.add('show');
+  m.innerHTML = `<h3><span class="spinner"></span>PowerPoint로 여는 중…</h3><div class="hint">${esc(file.name)} — 슬라이드가 많으면 1분 넘게 걸릴 수 있어요.</div>`;
+  try {
+    const r = await fetch('/api/import?name=' + encodeURIComponent(file.name), { method: 'POST', body: file });
+    const res = await r.json();
+    if (!r.ok || res.error) throw new Error((res.error || '가져오지 못했어요.') + (res.log ? '\n' + res.log : ''));
+    imp = { id: res.id, name: res.name, dir: res.dir, info: res.info, edits: {}, sel: 0, shape: null };
+    m.innerHTML = `<h3>'${esc(res.name)}' — ${res.info.slideCount}장을 가져왔어요</h3>
+      <div class="row" style="gap:6px;margin-top:6px">${res.info.slides.slice(0, 6).map(s => `<img src="${impUrl('png', s.png)}" style="width:120px;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.15)">`).join('')}</div>
+      <div class="choice">
+        <button id="chOrig"><b>원본 디자인 유지하고 수정</b><span class="hint">글자·사진·표·노트를 고치고 슬라이드를 지울 수 있어요. 원하면 내 색 조합(테마 색·글꼴)도 입힐 수 있어요.</span></button>
+        <button id="chNew"><b>새 양식으로 다시 만들기</b><span class="hint">제목·본문·사진·표·차트 내용을 편집기 슬라이드로 옮겨요. 색과 양식은 편집기에서 고른 대로 새로 만들어져요.</span></button>
+      </div>
+      <div class="row" style="margin-top:12px"><span class="grow"></span><button class="btn" id="closeModal">취소</button></div>`;
+    $('chOrig').onclick = () => { $('modalBack').classList.remove('show'); openOrig(); };
+    $('chNew').onclick = () => { $('modalBack').classList.remove('show'); convertToDeck(); };
+  } catch (e) {
+    m.innerHTML = `<h3>가져오지 못했어요</h3><div class="hint">암호가 걸린 파일이거나 PowerPoint가 다른 대화상자를 띄운 상태일 수 있어요.</div><pre class="log">${esc(e.message)}</pre>`;
+    m.insertAdjacentHTML('beforeend', '<button class="btn" id="closeModal">닫기</button>');
+  }
+  const cm = $('closeModal'); if (cm) cm.onclick = () => $('modalBack').classList.remove('show');
+}
+
+// ---- convert an imported deck into editor slides ----
+// Group text shapes into vertical columns (same left edge) — used for stats and process slides.
+function columns(bs) {
+  const cols = [];
+  bs.forEach(b => { let c = cols.find(c => Math.abs(c.x - b.x) < 25); if (!c) { c = { x: b.x, items: [] }; cols.push(c); } c.items.push(b); });
+  cols.forEach(c => c.items.sort((a, b) => a.y - b.y));
+  return cols.sort((a, b) => a.x - b.x);
+}
+// Pair each heading with the text directly below it (same left edge, small gap) — used for agenda and cards.
+function pairs(bs, one) {
+  const out = [], used = new Set();
+  [...bs].sort((a, b) => (a.y - b.y) || (a.x - b.x)).forEach(b => {
+    if (used.has(b)) return;
+    const d = bs.filter(o => !used.has(o) && o !== b && Math.abs(o.x - b.x) < 25 && o.y > b.y && o.y - (b.y + b.h) < 40).sort((a, c) => a.y - c.y)[0];
+    used.add(b); if (d) used.add(d);
+    out.push({ title: one(b), desc: d ? one(d) : '' });
+  });
+  return out;
+}
+function chartKind(t) { if ([57,58,59,60,-4099].includes(t)) return 'bar'; if ([4,63,64,65,66,67].includes(t)) return 'line'; if ([5,-4102,69,70,-4120].includes(t)) return 'pie'; return 'column'; }
+function convertToDeck() {
+  const info = imp.info, W = info.width, H = info.height, n = info.slides.length;
+  let secN = 0;
+  const slides = info.slides.filter(s => !s.hidden).map((s, i, arr) => {
+    const texts = s.shapes.filter(x => x.kind === 'text' && !x.empty && shapeText(x).trim());
+    let title = texts.find(x => x.ph === 1 || x.ph === 3);
+    if (!title) title = texts.filter(x => x.y < H * 0.35 && !isJunk(x)).sort((a, b) => Math.max(0, ...b.paragraphs.map(p => p.size)) - Math.max(0, ...a.paragraphs.map(p => p.size)))[0];
+    const titleText = title ? shapeText(title).replace(new RegExp(SOFT, 'g'), '\n') : '';
+    const bodies = texts.filter(x => x !== title && !isJunk(x)).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    const bodyText = bodies.map(shapeText).join('\n');
+    const pics = s.shapes.filter(x => x.kind === 'picture' && x.image).sort((a, b) => b.w * b.h - a.w * a.h);
+    const pic = pics[0] && pics[0].w * pics[0].h > W * H * 0.04 ? pics[0] : null;
+    const table = s.shapes.find(x => x.kind === 'table' && x.table && x.table.length);
+    const chart = s.shapes.find(x => x.kind === 'chart' && x.categories && x.categories.length);
+    const img = pic ? { image: imp.dir + '\\media\\' + pic.image, imageUrl: impUrl('media', pic.image) } : {};
+    const notes = s.notes ? { notes: s.notes } : {};
+    const sub = bodies.find(x => x.ph === 4) || bodies[0];
+    if (i === 0) return Object.assign({ type: 'cover', section: '표지', title: titleText || imp.name, subtitle: sub ? shapeText(sub).split('\n')[0] : '', meta: bodies.filter(x => x !== sub).map(x => shapeText(x).split('\n')[0]).join('  ·  ') }, img, notes);
+    if (i === arr.length - 1 && /감사|thank|q\s*&\s*a|문의|끝/i.test(titleText + ' ' + bodyText.slice(0, 40))) return Object.assign({ type: 'closing', section: '마무리', title: titleText || '감사합니다', subtitle: sub ? shapeText(sub).split('\n')[0] : '', meta: bodies.filter(x => x !== sub).map(x => shapeText(x).split('\n')[0]).join('  ·  ') }, img, notes);
+    if (table) return Object.assign({ type: 'table', title: titleText, headers: table.table[0], rows: table.table.slice(1), statusColors: { '완료': 'accent4', '진행 중': 'accent1', '예정': 'accent6' } }, notes);
+    if (chart) {
+      const one1 = b => shapeText(b).replace(new RegExp(SOFT, 'g'), ' ').replace(/\n/g, ' ').trim();
+      const cap = bodies.find(b => b.y + b.h <= chart.y + 8 && Math.abs(b.x - chart.x) < 80);
+      return Object.assign({ type: 'chart', title: titleText, caption: cap ? one1(cap) : '', chartType: chartKind(chart.chartType), seriesName: chart.seriesName || '값', categories: chart.categories, values: chart.values || [], highlight: -1,
+        insights: pairs(bodies.filter(b => b !== cap), one1).slice(0, 3) }, notes);
+    }
+    if (!bodies.length && !pic) return Object.assign({ type: 'section', number: N2(++secN), title: titleText || '섹션', desc: '' }, notes);
+    // layout-aware detection: agenda, stats, process, compare, cards
+    const one = b => shapeText(b).replace(new RegExp(SOFT, 'g'), ' ').replace(/\n/g, ' ').trim();
+    const cols = columns(bodies), prs = pairs(bodies, one);
+    if (/목차|차례|agenda|contents|index/i.test(titleText) && prs.length >= 2) return Object.assign({ type: 'agenda', title: titleText, items: prs.slice(0, 6) }, notes);
+    const isNum = t => /^[+\-]?[\d.,]+\s*(%|%p|배|억|만|천|원|명|건|개|x|X|점|위|년|개월|시간|분|K|M|B)?\+?$/.test(t);
+    const numCols = cols.filter(c => c.items.some(b => isNum(one(b))));
+    if (numCols.length >= 2 && numCols.length <= 4) {
+      const used = new Set();
+      const stats = numCols.map(c => { const i0 = c.items.findIndex(b => isNum(one(b))); const v = c.items[i0], l = c.items[i0 + 1], nt = c.items[i0 + 2]; [v, l, nt].forEach(b => b && used.add(b)); return { value: one(v), label: l ? one(l) : '', note: nt ? one(nt) : '' }; });
+      const rest = bodies.filter(b => !used.has(b) && one(b).length > 12).sort((a, b) => one(b).length - one(a).length);
+      return Object.assign({ type: 'stats', title: titleText, stats }, rest[0] ? { insight: one(rest[0]) } : {}, notes);
+    }
+    if (/단계|로드맵|프로세스|절차|step|roadmap|process|timeline/i.test(titleText) && cols.length >= 3 && cols.length <= 5)
+      return Object.assign({ type: 'process', title: titleText, current: -1, steps: cols.map(c => { const t = c.items.map(one); return { title: t[0] || '', desc: t[1] || '', when: t[2] || '' }; }) }, notes);
+    if (/비교|vs\.?|as-?is|to-?be|전후|before|after/i.test(titleText + ' ' + bodyText.slice(0, 60))) {
+      const L = bodies.filter(b => b.x + b.w / 2 < W / 2).map(one).filter(t => !/^[—→\-]$/.test(t)), Rr = bodies.filter(b => b.x + b.w / 2 >= W / 2).map(one).filter(t => !/^[—→\-]$/.test(t));
+      if (L.length >= 2 && Rr.length >= 2) {
+        const side = a => { const lab = a[0].length <= 8 && a.length > 2 ? a.shift() : ''; return { label: lab, title: a.shift(), items: a }; };
+        return Object.assign({ type: 'compare', title: titleText, left: side(L), right: side(Rr) }, notes);
+      }
+    }
+    const leadShape = bodies.find(b => b.y < H * 0.25 && b.w > W * 0.5);
+    const cardPairs = pairs(bodies.filter(b => b !== leadShape), one);
+    if (!pic && cardPairs.length >= 2 && cardPairs.length <= 4 && cardPairs.every(p => p.title.length <= 30 && p.desc))
+      return Object.assign({ type: 'cards', title: titleText, lead: leadShape ? one(leadShape) : '', cards: cardPairs }, notes);
+    if (/구역|섹션|section/i.test(s.layout) && bodyText.length < 80 && !pic) return Object.assign({ type: 'section', number: N2(++secN), title: titleText, desc: bodyText.replace(/\n/g, ' ') }, notes);
+    if (pic && bodyText.length < 160) return Object.assign({ type: 'photo', title: titleText, text: bodyText.replace(new RegExp(SOFT, 'g'), ' '), caption: '' }, img, notes);
+    const bullets = [];
+    bodies.forEach(b => b.paragraphs.forEach(p => { const t = p.text.replace(new RegExp(SOFT, 'g'), ' ').trim(); if (t) bullets.push((p.level > 1 ? '>' : '') + t); }));
+    return Object.assign({ type: 'bullets', title: titleText, bullets }, pic ? img : {}, notes);
+  });
+  if (state.deck.slides.length && !confirm(`지금 편집 중인 슬라이드(${state.deck.slides.length}장)를 가져온 내용(${slides.length}장)으로 바꿀까요?\n(지금 내용이 필요하면 취소하고 먼저 '프로젝트 저장'을 하세요)`)) return;
+  state.deck = { title: slides[0] ? slides[0].title : imp.name, footer: state.deck.footer || imp.name, slides };
+  state.fileName = imp.name + ' (새 양식)';
+  sel = 0; $('orig').hidden = true; refreshAll();
+  toast(`${slides.length}장을 편집기 슬라이드로 옮겼어요. 내용을 확인하고 'PPT 만들기'를 누르세요.`);
+}
+
+// ---- edit the original deck in place ----
+function slideEdit(i) { return imp.edits[i] || (imp.edits[i] = { shapes: {} }); }
+function isModified(i) { const e = imp.edits[i]; return !!e && (e.delete || e.notes !== undefined || Object.keys(e.shapes).length > 0); }
+function editableShapes(s) { return s.shapes.filter(x => (x.kind === 'text' && ![13, 16].includes(x.ph)) || (x.kind === 'picture' && x.image) || x.kind === 'table').sort((a, b) => (a.y - b.y) || (a.x - b.x)); }
+function openOrig() {
+  $('orig').hidden = false; $('origName').textContent = imp.name;
+  $('origInfo').textContent = `${imp.info.slideCount}장 · 원본 디자인 유지`;
+  $('origFile').value = imp.name + ' (수정본)';
+  renderOrig();
+}
+function renderOrig() {
+  const list = $('origList'); list.innerHTML = '';
+  imp.info.slides.forEach((s, i) => {
+    const e = imp.edits[s.index] || {};
+    const d = document.createElement('div'); d.className = 'it' + (i === imp.sel ? ' sel' : '') + (e.delete ? ' del' : '');
+    d.innerHTML = `<img src="${impUrl('png', s.png)}"><span class="tag">${s.index}${s.hidden ? ' · 숨김' : ''}</span>${e.delete ? '<span class="tag mod">삭제</span>' : isModified(s.index) ? '<span class="tag mod">수정</span>' : ''}`;
+    d.onclick = () => { imp.sel = i; imp.shape = null; renderOrig(); };
+    list.appendChild(d);
+  });
+  renderOrigStage(); renderOrigForm();
+}
+function fitOrig() {
+  const st = $('origStage'), c = $('origCanvas'), r = imp.info.width / imp.info.height;
+  const w = Math.max(200, st.clientWidth - 40), h = Math.max(120, st.clientHeight - 40);
+  const cw = Math.min(w, h * r); c.style.width = cw + 'px'; c.style.height = cw / r + 'px';
+}
+function renderOrigStage() {
+  const s = imp.info.slides[imp.sel], W = imp.info.width, H = imp.info.height, e = imp.edits[s.index] || { shapes: {} };
+  $('origCanvas').innerHTML = `<img src="${impUrl('png', s.png)}">` + editableShapes(s).map(x =>
+    `<div class="hit${imp.shape === x.key ? ' on' : ''}${e.shapes[x.key] ? ' mod' : ''}" data-key="${x.key}" style="left:${x.x / W * 100}%;top:${x.y / H * 100}%;width:${x.w / W * 100}%;height:${x.h / H * 100}%"></div>`).join('');
+  $('origCanvas').querySelectorAll('.hit').forEach(h => h.onclick = () => { imp.shape = h.dataset.key; renderOrigStage(); renderOrigForm(true); });
+  fitOrig();
+}
+function renderOrigForm(scroll) {
+  const s = imp.info.slides[imp.sel], e = slideEdit(s.index), f = $('origForm');
+  f.innerHTML = `<h2>${s.index}번 슬라이드 <label class="row" style="gap:4px;font-weight:400"><input type="checkbox" id="oDel" ${e.delete ? 'checked' : ''}> 이 슬라이드 삭제</label></h2>
+    <div class="hint">미리보기에서 영역을 누르면 해당 칸으로 이동해요. 수정한 내용은 '수정본 저장' 후 결과 화면에서 확인할 수 있어요.${SOFT} 표시는 줄바꿈(Shift+Enter)이에요.</div>`;
+  $('oDel').onchange = ev => { e.delete = ev.target.checked; renderOrig(); };
+  let tn = 0;
+  for (const x of editableShapes(s)) {
+    const fe = document.createElement('div'); fe.className = 'field' + (imp.shape === x.key ? ' on' : ''); fe.dataset.key = x.key;
+    const cur = e.shapes[x.key] || {};
+    if (x.kind === 'text') {
+      const label = (x.ph === 1 || x.ph === 3) ? '제목' : x.ph === 4 ? '부제목' : x.ph === 15 ? '바닥글' : `텍스트 ${++tn}`;
+      const orig = shapeText(x);
+      fe.innerHTML = `<div class="lbl"><span>${label}${x.inGroup ? ' (그룹 안)' : ''}</span><span>${cur.paragraphs ? '수정됨' : ''}</span></div><textarea rows="${Math.min(8, Math.max(2, (x.paragraphs || []).length + 1))}"></textarea>`;
+      const ta = fe.querySelector('textarea'); ta.value = cur.paragraphs ? cur.paragraphs.join('\n') : orig;
+      ta.oninput = () => { if (ta.value === orig) delete e.shapes[x.key]; else e.shapes[x.key] = { paragraphs: ta.value.split('\n') }; fe.querySelector('.lbl span:last-child').textContent = e.shapes[x.key] ? '수정됨' : ''; renderOrigStage(); markList(); };
+      ta.onfocus = () => { if (imp.shape !== x.key) { imp.shape = x.key; renderOrigStage(); f.querySelectorAll('.field').forEach(q => q.classList.toggle('on', q.dataset.key === x.key)); } };
+    } else if (x.kind === 'picture') {
+      fe.innerHTML = `<div class="lbl"><span>사진${x.inGroup ? ' (그룹 안 — 바꿀 수 없어요)' : ''}</span><span>${cur.image ? '바뀜' : ''}</span></div>
+        <div class="row"><img src="${cur.imageUrl || impUrl('media', x.image)}" style="width:110px;height:70px;object-fit:cover;border-radius:4px;background:#F2F3F7">
+        ${x.inGroup ? '' : `<button class="btn sm" data-a="pick">사진 바꾸기</button>${cur.image ? '<button class="btn sm" data-a="undo">되돌리기</button>' : ''}`}</div>`;
+      const pick = fe.querySelector('[data-a=pick]');
+      if (pick) pick.onclick = () => { const inp = $('imgFile'); inp.value = ''; inp.onchange = async () => { const fl = inp.files[0]; if (!fl) return; try { const r = await upload(fl, 'image'); e.shapes[x.key] = { image: r.path, imageUrl: r.url }; renderOrig(); toast('사진을 바꿨어요. 원래 사진 자리에 맞춰 잘려 들어가요.'); } catch (err) { toast(err.message); } }; inp.click(); };
+      const undo = fe.querySelector('[data-a=undo]'); if (undo) undo.onclick = () => { delete e.shapes[x.key]; renderOrig(); };
+    } else if (x.kind === 'table') {
+      const data = cur.table || x.table;
+      fe.innerHTML = `<div class="lbl"><span>표 (${x.table.length}행 × ${x.table[0].length}열)</span><span>${cur.table ? '수정됨' : ''}</span></div><table>${data.map((row, r) => `<tr>${row.map((v, c) => `<td><input type="text" data-r="${r}" data-c="${c}" value="${esc(v)}"></td>`).join('')}</tr>`).join('')}</table>`;
+      fe.querySelectorAll('input').forEach(inp => inp.oninput = () => {
+        const t = (e.shapes[x.key] && e.shapes[x.key].table) || x.table.map(r => r.slice());
+        t[+inp.dataset.r][+inp.dataset.c] = inp.value;
+        if (JSON.stringify(t) === JSON.stringify(x.table)) delete e.shapes[x.key]; else e.shapes[x.key] = { table: t };
+        renderOrigStage(); markList();
+      });
+    }
+    f.appendChild(fe);
+  }
+  const nf = document.createElement('div'); nf.className = 'field';
+  nf.innerHTML = `<div class="lbl"><span>발표자 노트</span></div><textarea rows="3"></textarea>`;
+  const nt = nf.querySelector('textarea'); nt.value = e.notes !== undefined ? e.notes : (s.notes || '');
+  nt.oninput = () => { if (nt.value === (s.notes || '')) delete e.notes; else e.notes = nt.value; markList(); };
+  f.appendChild(nf);
+  if (scroll && imp.shape) { const t = f.querySelector(`.field[data-key="${imp.shape}"]`); if (t) { t.scrollIntoView({ block: 'center' }); const ta = t.querySelector('textarea, input'); if (ta) ta.focus({ preventScroll: true }); } }
+}
+function markList() {
+  $('origList').querySelectorAll('.it').forEach((d, i) => {
+    const idx = imp.info.slides[i].index, e = imp.edits[idx] || {};
+    let tag = d.querySelector('.tag.mod'); const want = e.delete ? '삭제' : isModified(idx) ? '수정' : '';
+    if (want && !tag) { tag = document.createElement('span'); tag.className = 'tag mod'; d.appendChild(tag); }
+    if (tag) { if (want) tag.textContent = want; else tag.remove(); }
+  });
+}
+async function saveOrig() {
+  const slides = Object.entries(imp.edits).filter(([i]) => isModified(+i)).map(([i, e]) => {
+    const o = { index: +i };
+    if (e.delete) { o.delete = true; return o; }
+    if (e.notes !== undefined) o.notes = e.notes;
+    o.shapes = Object.entries(e.shapes).map(([key, v]) => Object.assign({ key }, v.paragraphs ? { paragraphs: v.paragraphs } : {}, v.image ? { image: v.image } : {}, v.table ? { table: v.table } : {}));
+    return o;
+  });
+  const useBrand = $('origBrand').checked;
+  if (!slides.length && !useBrand) { toast('바뀐 내용이 없어요.'); return; }
+  if (slides.filter(s => s.delete).length === imp.info.slideCount) { toast('모든 슬라이드를 지울 수는 없어요.'); return; }
+  const m = $('modal'); $('modalBack').classList.add('show');
+  m.innerHTML = '<h3><span class="spinner"></span>수정본을 만드는 중…</h3><div class="hint">원본 파일은 그대로 두고 새 파일로 저장해요.</div>';
+  const body = { id: imp.id, fileName: $('origFile').value || imp.name + ' (수정본)', editsJson: JSON.stringify({ slides }) };
+  if (useBrand) { const { colors } = derivePalette(state.brand); body.brandJson = JSON.stringify({ colors, headFont: state.brand.headFont, bodyFont: state.brand.bodyFont }); }
+  try {
+    const r = await fetch('/api/apply', { method: 'POST', body: JSON.stringify(body) }); const res = await r.json();
+    if (res.ok) showResult(res);
+    else { m.innerHTML = `<h3>저장하지 못했어요</h3><pre class="log">${esc(res.log || res.error || '')}</pre><button class="btn" id="closeModal">닫기</button>`; $('closeModal').onclick = () => $('modalBack').classList.remove('show'); }
+  } catch (e) { m.innerHTML = `<h3>편집기 서버에 연결할 수 없어요</h3><button class="btn" id="closeModal">닫기</button>`; $('closeModal').onclick = () => $('modalBack').classList.remove('show'); }
+}
+function wireImport() {
+  $('importBtn').onclick = () => { $('pptFile').value = ''; $('pptFile').click(); };
+  $('pptFile').onchange = () => { const f = $('pptFile').files[0]; if (f) importPpt(f); };
+  $('origClose').onclick = () => { const changed = Object.keys(imp.edits).some(i => isModified(+i)); if (changed && !confirm('저장하지 않은 수정 내용이 있어요. 닫을까요?')) return; $('orig').hidden = true; };
+  $('origSave').onclick = saveOrig;
+  $('origToNew').onclick = convertToDeck;
+  window.addEventListener('resize', () => { if (imp && !$('orig').hidden) fitOrig(); });
+  // dropping a .pptx anywhere starts an import
+  document.addEventListener('dragover', e => { if ([...e.dataTransfer.items].some(i => i.kind === 'file')) e.preventDefault(); });
+  document.addEventListener('drop', e => { const f = [...e.dataTransfer.files].find(x => /\.(pptx|ppt|pptm|potx)$/i.test(x.name)); if (f) { e.preventDefault(); importPpt(f); } });
 }
 
 // ---------------- boot ----------------
@@ -766,7 +1053,7 @@ async function build() {
   state = restore();
   if (state) state = normalize(state);
   else { state = { fileName: '새 프레젠테이션', brand: JSON.parse(JSON.stringify(server.brands[0] || DEFAULT_BRAND)), layout: {}, deck: defaultDeck() }; state.layout = recommendLayout(); }
-  renderProjects(); wire(); refreshAll();
+  renderProjects(); wire(); wireImport(); refreshAll();
 })();
 </script>
 </body>
