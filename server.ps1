@@ -122,6 +122,59 @@ function Build($ctx) {
   SendJson $ctx ([ordered]@{ ok = [bool]$ok; out = $out; potx = $(if ($req.potx) { [IO.Path]::ChangeExtension($out, '.potx') } else { $null }); pngs = $pngs; log = $log.Trim() })
 }
 
+# ---------- Existing presentations: import and edit in place ----------
+$ImpDir = Join-Path $DataDir 'imports'
+New-Item -ItemType Directory -Force $ImpDir | Out-Null
+function RunEngine([string]$script, [string[]]$scriptArgs, [string]$logBase) {
+  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + (Join-Path $EngineDir "scripts\$script") + '"')) + ($scriptArgs | ForEach-Object { if ($_ -like '-*') { $_ } else { '"' + $_ + '"' } })
+  $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$logBase.log" -RedirectStandardError "$logBase.err"
+  return ((RawOr "$logBase.log" '') + (RawOr "$logBase.err" '')).Trim()
+}
+function UniqueOut([string]$name) {
+  $out = Join-Path $OutDir ($name + '.pptx'); $i = 2
+  while (Test-Path -LiteralPath $out) { $out = Join-Path $OutDir ("$name-$i.pptx"); $i++ }
+  return $out
+}
+function ImportDeck($ctx) {
+  $orig = [string]$ctx.Request.QueryString['name']
+  $ext = [IO.Path]::GetExtension($orig).ToLower()
+  if (@('.pptx', '.ppt', '.potx', '.pptm') -notcontains $ext) { SendJson $ctx @{ error = "PowerPoint 파일(.pptx, .ppt)만 가져올 수 있어요." } 400; return }
+  $bytes = BodyBytes $ctx
+  if ($bytes.Length -gt 300MB) { SendJson $ctx @{ error = 'file too large (300MB max)' } 400; return }
+  $id = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)
+  $dir = Join-Path $ImpDir $id
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  $srcFile = Join-Path $dir ('source' + $ext)
+  [IO.File]::WriteAllBytes($srcFile, $bytes)
+  WriteText (Join-Path $dir 'name.txt') ([IO.Path]::GetFileNameWithoutExtension($orig))
+  Write-Host ("[import] " + $orig + " ...")
+  $log = RunEngine 'import.ps1' @('-Source', $srcFile, '-OutDir', $dir) (Join-Path $dir 'import')
+  if ($log -notmatch '(?m)^OK ' -or -not (Test-Path (Join-Path $dir 'info.json'))) { Write-Host '[import] FAILED'; SendJson $ctx @{ error = 'PowerPoint로 파일을 열지 못했어요.'; log = $log } 500; return }
+  Write-Host '[import] OK'
+  SendRaw $ctx ('{"id":' + (JStr $id) + ',"name":' + (JStr ([IO.Path]::GetFileNameWithoutExtension($orig))) + ',"dir":' + (JStr $dir) + ',"info":' + (ReadText (Join-Path $dir 'info.json')) + '}')
+}
+function ApplyEdits($ctx) {
+  $req = (BodyText $ctx) | ConvertFrom-Json
+  $id = [string]$req.id
+  if ($id -notmatch '^[0-9a-f\-]+$') { SendJson $ctx @{ error = 'bad id' } 400; return }
+  $dir = Join-Path $ImpDir $id
+  $srcFile = Get-ChildItem $dir -Filter 'source.*' | Select-Object -First 1
+  if (-not $srcFile) { SendJson $ctx @{ error = '원본 파일을 찾을 수 없어요. 다시 가져와 주세요.' } 404; return }
+  $stamp = 'result-' + (Get-Date -Format 'HHmmss')
+  $work = Join-Path $dir $stamp
+  New-Item -ItemType Directory -Force $work | Out-Null
+  WriteText (Join-Path $work 'edits.json') ([string]$req.editsJson)
+  $out = UniqueOut (SafeName ([string]$req.fileName))
+  $args2 = @('-Source', $srcFile.FullName, '-Edits', (Join-Path $work 'edits.json'), '-Out', $out, '-PngDir', (Join-Path $work 'png'))
+  if ($req.brandJson) { WriteText (Join-Path $work 'brand.json') ([string]$req.brandJson); $args2 += @('-Brand', (Join-Path $work 'brand.json')) }
+  Write-Host ("[apply] " + $out + " ...")
+  $log = RunEngine 'apply.ps1' $args2 (Join-Path $work 'apply')
+  $ok = ($log -match '(?m)^OK ')
+  $pngs = @(); if (Test-Path (Join-Path $work 'png')) { $pngs = @(Get-ChildItem (Join-Path $work 'png') -Filter 'slide-*.png' | Sort-Object Name | ForEach-Object { "/imports/$id/$stamp/png/" + $_.Name }) }
+  Write-Host ("[apply] " + $(if ($ok) { 'OK' } else { 'FAILED' }))
+  SendJson $ctx ([ordered]@{ ok = [bool]$ok; out = $out; pngs = $pngs; log = $log })
+}
+
 # ---------- Start listener ----------
 $listener = $null; $port = 0
 foreach ($try in 8765..8785) {
@@ -159,6 +212,9 @@ while ($listener.IsListening) {
     elseif ($path -eq '/api/project' -and $method -eq 'POST') { WriteText (Join-Path $ProjDir ((SafeName $q['name']) + '.json')) (BodyText $ctx); SendJson $ctx @{ ok = $true } }
     elseif ($path -eq '/api/upload' -and $method -eq 'POST') { Upload $ctx }
     elseif ($path -eq '/api/build' -and $method -eq 'POST') { Build $ctx }
+    elseif ($path -eq '/api/import' -and $method -eq 'POST') { ImportDeck $ctx }
+    elseif ($path -eq '/api/apply' -and $method -eq 'POST') { ApplyEdits $ctx }
+    elseif ($path -match '^/imports/([0-9a-f\-]+)/((result-\d+/)?(png|media))/([A-Za-z0-9_\-]+\.png)$') { SendFile $ctx (Join-Path $ImpDir ($Matches[1] + '\' + $Matches[2].Replace('/', '\') + '\' + $Matches[5])) }
     elseif ($path -eq '/api/open' -and $method -eq 'POST') {
       $req = (BodyText $ctx) | ConvertFrom-Json
       $target = [string]$req.path
