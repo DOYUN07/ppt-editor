@@ -284,6 +284,8 @@ while ($listener.IsListening) {
     }
     elseif ($path -eq '/api/project' -and $method -eq 'POST') { WriteText (Join-Path $ProjDir ((SafeName (QS $ctx 'name')) + '.json')) (BodyText $ctx); SendJson $ctx @{ ok = $true } }
     elseif ($path -eq '/api/fontalias') { SendRaw $ctx (FontAlias) }
+    elseif ($path -eq '/api/templates' -and $method -eq 'GET') { SendRaw $ctx (RawOr (Join-Path $DataDir 'templates.json') '[]') }
+    elseif ($path -eq '/api/templates' -and $method -eq 'POST') { WriteText (Join-Path $DataDir 'templates.json') (BodyText $ctx); SendJson $ctx @{ ok = $true } }
     elseif ($path -eq '/api/upload' -and $method -eq 'POST') { Upload $ctx }
     elseif ($path -eq '/api/build' -and $method -eq 'POST') { Build $ctx }
     elseif ($path -eq '/api/render' -and $method -eq 'POST') { RenderDoc $ctx }
