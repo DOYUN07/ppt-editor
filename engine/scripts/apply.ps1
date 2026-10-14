@@ -129,7 +129,7 @@ try {
   Copy-Item -LiteralPath $tout -Destination $outFull -Force
   Write-Output "OK $Out"
 }
-catch { Write-Output ("APPLY ERROR: " + $_ + " @ " + $_.ScriptStackTrace); exit 1 }
+catch { Write-Output ("APPLY ERROR: " + $_ + " @ " + $_.ScriptStackTrace); try { if ($pres) { $pres.Saved = -1; $pres.Close() } } catch {}; exit 1 }
 finally {
   # Never close the user's own PowerPoint: quit only when no other presentation is open.
   $quit = $false

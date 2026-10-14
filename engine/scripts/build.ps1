@@ -705,7 +705,9 @@ try {
     if (Test-Path $shared) { $HistoryPath = Join-Path $shared 'history.json' } else { $HistoryPath = Join-Path $EngineDir 'history.json' }
   }
   $hist = @()
-  if (Test-Path $HistoryPath) { try { $hist = @([IO.File]::ReadAllText($HistoryPath, [Text.Encoding]::UTF8) | ConvertFrom-Json) } catch { $hist = @() } }
+  # ConvertFrom-Json returns a JSON array as one object; enumerate it (and unwrap older {value, Count} wrappers) to keep a flat list
+  function FlatHist($node) { foreach ($h in @($node)) { if ($null -eq $h -or $h -is [string]) { continue }; if ($h -is [array]) { FlatHist $h } elseif ($h.PSObject.Properties['value'] -and -not $h.PSObject.Properties['date']) { FlatHist $h.value } else { $h } } }
+  if (Test-Path $HistoryPath) { try { $hist = @(FlatHist ([IO.File]::ReadAllText($HistoryPath, [Text.Encoding]::UTF8) | ConvertFrom-Json)) } catch { $hist = @() } }
   $hist += [pscustomobject]@{
     date = (Get-Date -Format 'yyyy-MM-dd HH:mm'); deck = $name; style = [string](Get $sty 'name' '')
     cover = $coverKind; coverTitle = $coverTitle; mirror = $mirror; titleAlign = $titleAlign; kicker = $kicker; motif = $motif
@@ -716,7 +718,7 @@ try {
   [IO.File]::WriteAllText($HistoryPath, (ConvertTo-Json -InputObject @($hist) -Depth 4), (New-Object Text.UTF8Encoding $false))
   Write-Output "OK $Out"
 }
-catch { Write-Output ("BUILD ERROR: " + $_ + " @ " + $_.ScriptStackTrace); exit 1 }
+catch { Write-Output ("BUILD ERROR: " + $_ + " @ " + $_.ScriptStackTrace); try { if ($pres) { $pres.Saved = -1; $pres.Close() } } catch {}; exit 1 }
 finally {
   # Never close the user's own PowerPoint: quit only when no other presentation is open.
   $quit = $false
