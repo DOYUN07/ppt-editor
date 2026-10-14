@@ -93,29 +93,6 @@ function missingFonts(slides) {
   slides.forEach(sl => sl.extra.forEach(e => { if (!e.text) return; e.text.paras.forEach(p => p.runs.forEach(r => { if (r.font && !have.has(r.font.toLowerCase()) && !/^\+m[jn]-/.test(r.font)) miss.set(r.font, (miss.get(r.font) || 0) + 1); })); }));
   return [...miss.keys()];
 }
-function offerFontSwap(missing) {
-  if (!missing.length) return;
-  const m = $('modal'); $('modalBack').classList.add('show');
-  const WEIGHT = /\s*(Thin|ExtraLight|Light|DemiLight|Regular|Medium|SemiBold|Bold|ExtraBold|Black|Heavy)$/i;
-  const pick = (server.fonts || []).filter(f => /Pretendard|Paperlogy|Nanum|Noto Sans KR|Malgun|맑은|나눔|본고딕|Spoqa|SUIT|Gmarket/i.test(f) && !WEIGHT.test(f));
-  const def = pick.find(f => f === 'Pretendard') || pick[0] || 'Malgun Gothic';
-  m.innerHTML = `<h3>이 PC에 없는 글꼴이 있어요</h3>
-    <div class="hint">원본 PPT에 쓰인 글꼴 중 아래 ${missing.length}개가 설치돼 있지 않아요. 그대로 두면 비슷한 글꼴로 대신 보여서 글자 폭·줄바꿈이 원본과 달라질 수 있어요.
-    (PowerPoint로 열어도 마찬가지예요.) 글꼴을 설치한 뒤 다시 가져오면 원본과 같게 보여요.</div>
-    <div style="margin:10px 0;line-height:1.9">${missing.map(f => `<span style="display:inline-block;background:#F2F3F7;border-radius:5px;padding:1px 8px;margin:0 4px 4px 0;font-size:12px">${esc(f)}</span>`).join('')}</div>
-    <label class="f">대신 쓸 글꼴</label><select id="fsSel" style="width:100%">${(pick.length ? pick : [def]).map(f => `<option ${f === def ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
-    <div class="row" style="margin-top:12px"><span class="grow"></span><button class="btn" id="fsKeep">그대로 두기</button><button class="btn primary" id="fsGo">이 글꼴로 바꾸기</button></div>`;
-  $('fsKeep').onclick = () => $('modalBack').classList.remove('show');
-  $('fsGo').onclick = () => {
-    const to = $('fsSel').value, set = new Set(missing), have = new Set(server.fonts || []); snap();
-    // keep the weight of the missing font ('네오현대 EBK', 'Wanted Sans SemiBold' ...) when the replacement has that weight
-    const weightOf = f => /ExtraBlack|Black|EBK|Heavy/i.test(f) ? 'Black' : /ExtraBold|\bEB\b|EB$/i.test(f) ? 'ExtraBold' : /SemiBold|DemiBold/i.test(f) ? 'SemiBold'
-      : /Bold|\bB$|[^A-Z]B$/.test(f) ? 'Bold' : /Medium|\bM$/.test(f) ? 'Medium' : /ExtraLight|Thin/i.test(f) ? 'ExtraLight' : /Light|\bL$|[^A-Z]L$/.test(f) ? 'Light' : '';
-    const swap = r => { const w = weightOf(r.font); if (w && have.has(`${to} ${w}`)) r.font = `${to} ${w}`; else { r.font = to; if (/Bold|Black/.test(w)) r.b = true; } };
-    state.deck.slides.forEach(sl => (sl.extra || []).forEach(e => { if (e.text) e.text.paras.forEach(p => p.runs.forEach(r => { if (r.font && set.has(r.font)) swap(r); })); }));
-    $('modalBack').classList.remove('show'); renderAll(); toast(`없는 글꼴 ${missing.length}개를 '${to}'(으)로 바꿨어요.`);
-  };
-}
 // exported pictures already carry rotation/flip/crop; rotated ones come out at their rotated outline size
 function exportedBox(sh, g, s, k, ox, oy) {
   const st = sh.style || {};
@@ -169,7 +146,7 @@ async function freeImport() {
   });
   if (replaceDeck(slides, imp.name, imp.name + ' (편집)')) {
     toast(`${slides.length}장을 자유 편집 요소로 가져왔어요.${skipped ? ` (${skipped}개 요소는 옮기지 못했어요)` : ''} 배경과 슬라이드 마스터 그림은 배경 이미지로 들어가 있어요.`);
-    offerFontSwap(missingFonts(slides));
+    offerImportStyle(slides, missingFonts(slides));
   }
 }
 

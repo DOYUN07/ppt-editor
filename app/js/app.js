@@ -289,7 +289,7 @@ function fixBullets(tx) {
 function parseEditor(tx, base) {
   const pv = pal(), hexToToken = h => { const x = hx(h); const k = Object.keys(pv).find(t => pv[t] === x && THEME_TOKENS.includes(t)); return k || '#' + x; };
   const rgb2hex = c => { const m = String(c).match(/\d+(\.\d+)?/g); return m ? toHex(m.slice(0, 3).map(Number)) : null; };
-  const baseColorHex = (base.color && pv[base.color]) ? pv[base.color] : hx(base.color || '000000');
+  const baseColorHex = resolveColor(base.color || '000000', pv);
   const paras = [];
   const blocks = [...tx.childNodes].filter(n => n.nodeType === 1 && n.matches('div') || (n.nodeType === 3 && n.textContent));
   (blocks.length ? blocks : [tx]).forEach(b => {
@@ -803,7 +803,7 @@ function slideProps(p) {
   const fl = document.createElement('input'); fl.type = 'text'; fl.value = state.deck.footer || ''; fl.oninput = () => { state.deck.footer = fl.value; renderCanvasStrip(); };
   p.append(field('바닥글 문구 (전체)', fl));
   const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '12px';
-  row.append(tbtn('⧉ 슬라이드 복제', '슬라이드 복제', () => { snap(); const c2 = clone(s); c2.id = uid(); state.deck.slides.splice(cur + 1, 0, c2); cur++; renderAll(); }), tbtn('🗑 슬라이드 삭제', '슬라이드 삭제', () => { if (state.deck.slides.length <= 1) return toast('슬라이드가 하나뿐이에요.'); snap(); state.deck.slides.splice(cur, 1); cur = Math.max(0, cur - 1); sel = []; renderAll(); }));
+  row.append(tbtn('★ 내 양식으로 저장', '이 슬라이드를 내 양식으로 저장', saveSlideAsTemplate), tbtn('⧉ 슬라이드 복제', '슬라이드 복제', () => { snap(); const c2 = clone(s); c2.id = uid(); state.deck.slides.splice(cur + 1, 0, c2); cur++; renderAll(); }), tbtn('🗑 슬라이드 삭제', '슬라이드 삭제', () => { if (state.deck.slides.length <= 1) return toast('슬라이드가 하나뿐이에요.'); snap(); state.deck.slides.splice(cur, 1); cur = Math.max(0, cur - 1); sel = []; renderAll(); }));
   p.append(row);
 }
 let csTimer = null;
@@ -839,6 +839,7 @@ function drawTemplates(d) {
   const free = document.createElement('div'); free.className = 'tpl'; free.innerHTML = '<div class="fr" style="display:flex;align-items:center;justify-content:center;color:#9AA1AE">빈 캔버스</div><div class="cap">자유 슬라이드</div>';
   free.onclick = () => tplMode === 'add' ? (snap(), state.deck.slides.splice(cur + 1, 0, newSlide('free')), cur++, sel = [], renderAll()) : detachTemplate();
   g.appendChild(free);
+  drawMyTemplates(d, tplMode);   // saved slides ('내 양식') go on top
 }
 function drawElements(d) {
   d.insertAdjacentHTML('beforeend', '<h3 class="sec">도형</h3><div class="shape-grid" id="shGrid"></div><h3 class="sec">선</h3><div class="shape-grid" id="lnGrid"></div><h3 class="sec">아이콘 <input type="text" id="icSearch" placeholder="검색" style="width:110px;padding:3px 6px"></h3><div class="icon-grid" id="icGrid"></div>');

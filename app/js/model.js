@@ -42,6 +42,31 @@ function derivePalette(b) {
   return { colors: { dk1, lt1: 'FFFFFF', dk2, lt2, accent1, accent2, accent3, accent4: '10BF7F', accent5: 'F97316', accent6: '6B7280', hlink: dk2, folHlink: accent2 }, notes };
 }
 const THEME_TOKENS = ['dk2', 'accent1', 'accent2', 'accent3', 'lt2', 'dk1', 'accent6', 'lt1', 'accent4', 'accent5'];
+// Theme colour with brightness, like PowerPoint's "lighter 40%": 'accent1@0.4' (toward white), 'dk2@-0.3' (toward black).
+// Changing the brand colours recolours these too.
+// A colour can also be stored relative to a theme colour as a hue / saturation / lightness difference:
+// 'dk2~12,-0.1,0.25' — exact for the original colours, and follows the brand when it changes.
+const THEME_COLOR_RE = /^(dk1|lt1|dk2|lt2|accent[1-6])(?:@(-?\d*\.?\d+)|~(-?\d*\.?\d+),(-?\d*\.?\d+),(-?\d*\.?\d+))?$/;
+const isThemeColor = c => THEME_COLOR_RE.test(String(c || ''));
+const shadeHex = (h, b) => b > 0 ? mix(h, 'FFFFFF', b) : b < 0 ? mix(h, '000000', -b) : hx(h);
+function hsl(h) {
+  const [r, g, b] = toRgb(h).map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(hh * 60 + 360) % 360, Math.min(1, s), l];
+}
+function hslHex(h, s, l) {
+  h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); l = Math.max(0, Math.min(1, l));
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return toHex([(r + m) * 255, (g + m) * 255, (b + m) * 255]);
+}
+function resolveColor(c, pv) {
+  const m = String(c || '').match(THEME_COLOR_RE); if (!m) return hx(c);
+  if (m[3] != null) { const [h, s, l] = hsl(pv[m[1]]); return hslHex(h + +m[3], s + +m[4], l + +m[5]); }
+  return shadeHex(pv[m[1]], +(m[2] || 0));
+}
 const TOKEN_NAMES = { dk1: '진한 글자', lt1: '흰색', dk2: '메인', lt2: '연한 배경', accent1: '강조', accent2: '보조', accent3: '연한 보조', accent4: '초록', accent5: '주황', accent6: '회색' };
 
 // ---------------- text helpers ----------------
@@ -407,6 +432,8 @@ function engineDoc(state, pal) {
     const elements = r.elements.map(e => {
       const o = clone(e); delete o.id; delete o.role; delete o.z; delete o.locked;
       if (o.image) delete o.image.url;
+      // shaded theme colours ('accent1@0.4') go to the engine as plain RGB; bare tokens keep the theme link
+      (function shade(x) { if (!x || typeof x !== 'object') return; for (const k of Object.keys(x)) { const v = x[k]; if (typeof v === 'string' && /[@~]/.test(v) && isThemeColor(v)) x[k] = '#' + resolveColor(v, pal); else if (typeof v === 'object') shade(v); } })(o);
       if (o.kind === 'icon') o.icon = { svg: iconSvg(o.icon.name, hex(o.icon.color || 'dk2'), o.icon.stroke) };
       return o;
     }).filter(o => !(o.kind === 'image' && !o.image.src));

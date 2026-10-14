@@ -5,7 +5,7 @@ function viewCtx(state) {
   const pal = derivePalette(state.brand).colors;
   return { pal, head: `'${state.brand.headFont}', 'Malgun Gothic', sans-serif`, body: `'${state.brand.bodyFont}', 'Malgun Gothic', sans-serif` };
 }
-const colorOf = (vc, c) => !c ? 'transparent' : (vc.pal[c] ? '#' + vc.pal[c] : c);
+const colorOf = (vc, c) => !c ? 'transparent' : vc.pal[c] ? '#' + vc.pal[c] : isThemeColor(c) ? '#' + resolveColor(c, vc.pal) : c;
 // 'Paperlogy 7 Bold', 'Pretendard ExtraBold' ... : browsers often know only the base family + a weight
 const FONT_WEIGHT_RE = /\s+(?:\d\s+)?(Thin|ExtraLight|UltraLight|Light|Regular|Medium|SemiBold|DemiBold|Bold|ExtraBold|UltraBold|Black|Heavy)$/i;
 const FONT_WEIGHTS = { thin: 100, extralight: 200, ultralight: 200, light: 300, regular: 400, medium: 500, semibold: 600, demibold: 600, bold: 700, extrabold: 800, ultrabold: 800, black: 900, heavy: 900 };
@@ -27,7 +27,7 @@ function runHtml(vc, r, base) {
   const deco = [r.u ? 'underline' : '', r.s ? 'line-through' : ''].filter(Boolean).join(' ');
   if (deco) st.push(`text-decoration:${deco}`);
   const t = esc(r.t).replace(/\n/g, '<br>') || '';
-  const attrs = (r.color && vc.pal[r.color] ? ` data-c="${r.color}"` : '') + (r.link ? ` data-link="${esc(r.link)}"` : '');
+  const attrs = (r.color && isThemeColor(r.color) ? ` data-c="${r.color}"` : '') + (r.link ? ` data-link="${esc(r.link)}"` : '');
   const inner = r.link ? `<u>${t}</u>` : t;
   return st.length || attrs ? `<span style="${st.join(';')}"${attrs}>${inner}</span>` : inner;
 }
@@ -140,7 +140,7 @@ function chartSvg(vc, e) {
       s += `<text x="${padL + 20}" y="${12 + i * band + band / 2 + 4}" font-size="11" fill="${dk1}" text-anchor="end">${esc(ct)}</text>`;
       let accX = 0;
       series.forEach((se, k) => { const v = Number((se.values || [])[i]) || 0, w = (pw - 70) * scale(v), y = 12 + i * band + (band - bh * (stacked ? 1 : series.length)) / 2 + (stacked ? 0 : k * bh);
-        const col = k === 0 && i === hl ? colorOf(vc, 'accent1') : k === 0 && c.pointColors && c.pointColors[i] ? c.pointColors[i] : (se.color ? colorOf(vc, se.color) : palette[k % palette.length]);
+        const col = k === 0 && i === hl ? colorOf(vc, 'accent1') : k === 0 && c.pointColors && c.pointColors[i] ? colorOf(vc, c.pointColors[i]) : (se.color ? colorOf(vc, se.color) : palette[k % palette.length]);
         s += `<rect x="${padL + 28 + accX}" y="${y}" width="${w}" height="${bh}" fill="${col}"/>`;
         if (c.showValues !== false) s += `<text x="${padL + 34 + accX + w}" y="${y + bh / 2 + 4}" font-size="11" font-weight="700" fill="${dk1}">${fmtVal(v, c.numFmt)}</text>`;
         if (stacked) accX += w; });
@@ -163,7 +163,7 @@ function chartSvg(vc, e) {
     const groupW = step * 0.64, bw = stacked ? groupW : groupW / series.length;
     cats.forEach((_, i) => { let accY = 0;
       series.forEach((se, k) => { const v = Number((se.values || [])[i]) || 0, bh = stacked ? ph * v / maxV : ph * scale(v), x = padL + step * i + (step - groupW) / 2 + (stacked ? 0 : k * bw), y = 12 + ph - bh - accY;
-        const col = k === 0 && i === hl ? colorOf(vc, 'accent1') : k === 0 && c.pointColors && c.pointColors[i] ? c.pointColors[i] : (se.color ? colorOf(vc, se.color) : palette[k % palette.length]);
+        const col = k === 0 && i === hl ? colorOf(vc, 'accent1') : k === 0 && c.pointColors && c.pointColors[i] ? colorOf(vc, c.pointColors[i]) : (se.color ? colorOf(vc, se.color) : palette[k % palette.length]);
         s += `<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="${col}"/>`;
         if (c.showValues !== false && !stacked) s += `<text x="${x + bw / 2}" y="${y - 5}" font-size="11" font-weight="700" text-anchor="middle" fill="${dk1}">${fmtVal(v, c.numFmt)}</text>`;
         if (stacked) accY += bh; }); });
