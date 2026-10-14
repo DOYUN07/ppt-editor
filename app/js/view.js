@@ -6,14 +6,23 @@ function viewCtx(state) {
   return { pal, head: `'${state.brand.headFont}', 'Malgun Gothic', sans-serif`, body: `'${state.brand.bodyFont}', 'Malgun Gothic', sans-serif` };
 }
 const colorOf = (vc, c) => !c ? 'transparent' : (vc.pal[c] ? '#' + vc.pal[c] : c);
-function fontOf(vc, f) { return f === 'head' ? vc.head : (!f || f === 'body') ? vc.body : `'${String(f).replace(/'/g, '')}', ${vc.body}`; }
+// 'Paperlogy 7 Bold', 'Pretendard ExtraBold' ... : browsers often know only the base family + a weight
+const FONT_WEIGHT_RE = /\s+(?:\d\s+)?(Thin|ExtraLight|UltraLight|Light|Regular|Medium|SemiBold|DemiBold|Bold|ExtraBold|UltraBold|Black|Heavy)$/i;
+const FONT_WEIGHTS = { thin: 100, extralight: 200, ultralight: 200, light: 300, regular: 400, medium: 500, semibold: 600, demibold: 600, bold: 700, extrabold: 800, ultrabold: 800, black: 900, heavy: 900 };
+function fontWeightOf(f) { const m = String(f || '').match(FONT_WEIGHT_RE); return m ? FONT_WEIGHTS[m[1].toLowerCase()] : null; }
+function fontOf(vc, f) {
+  if (f === 'head') return vc.head; if (!f || f === 'body') return vc.body;
+  const name = String(f).replace(/'/g, ''), base = name.replace(FONT_WEIGHT_RE, '');
+  return `'${name}', ${base !== name ? `'${base}', ` : ''}${vc.body}`;
+}
 
 function runHtml(vc, r, base) {
   const st = [];
   if (r.size) st.push(`font-size:${r.size}px`);
   if (r.font) st.push(`font-family:${fontOf(vc, r.font)}`);
   if (r.color) st.push(`color:${colorOf(vc, r.color)}`);
-  if (r.b != null) st.push(`font-weight:${r.b ? 700 : 400}`);
+  const fw = fontWeightOf(r.font);
+  if (r.b != null) st.push(`font-weight:${r.b ? Math.max(700, fw || 0) : fw || 400}`); else if (fw) st.push(`font-weight:${fw}`);
   if (r.i) st.push('font-style:italic');
   const deco = [r.u ? 'underline' : '', r.s ? 'line-through' : ''].filter(Boolean).join(' ');
   if (deco) st.push(`text-decoration:${deco}`);
@@ -37,7 +46,9 @@ function textHtml(vc, tx, opts = {}) {
     // no-wrap text overflows around its alignment point like PowerPoint (centered text spills out on both sides)
     const nw = tx.wrap === false && !opts.editing ? `display:flex;justify-content:${{ center: 'center', right: 'flex-end' }[al] || 'flex-start'};` : '';
     if (nw) body = `<span>${body}</span>`;
-    return `<div class="p" data-level="${lvl}" data-bullet="${bul}"${bul === 'char' ? ` data-bchar="${esc(p.bulletChar || '•')}"` : ''} style="${nw}text-align:${al};padding-left:${indent}px;${sa != null && i < tx.paras.length - 1 ? `margin-bottom:${sa}px;` : ''}${sb && i > 0 ? `margin-top:${sb}px;` : ''}">${mk}${body}</div>`;
+    // imported text: browsers set Korean text ~1% wider than PowerPoint, so give lines a little room before wrapping
+    const slack = tx.fitPpt ? (al === 'center' ? 'margin-left:-1.5%;margin-right:-1.5%;' : al === 'right' ? 'margin-left:-3%;' : 'margin-right:-3%;') : '';
+    return `<div class="p" data-level="${lvl}" data-bullet="${bul}"${bul === 'char' ? ` data-bchar="${esc(p.bulletChar || '•')}"` : ''} style="${nw}${slack}text-align:${al};padding-left:${indent}px;${sa != null && i < tx.paras.length - 1 ? `margin-bottom:${sa}px;` : ''}${sb && i > 0 ? `margin-top:${sb}px;` : ''}">${mk}${body}</div>`;
   }).join('');
   const field = tx.field === 'page' ? `<div class="p" style="text-align:${tx.align || 'right'}">${opts.page ?? ''}</div>` : '';
   const pad = tx.pad || opts.pad || [0, 0, 0, 0];
@@ -45,11 +56,28 @@ function textHtml(vc, tx, opts = {}) {
   return `<div class="tx" style="padding:${pad[0]}px ${pad[1]}px ${pad[2]}px ${pad[3]}px;justify-content:${jc};font-family:${fontOf(vc, tx.font)};font-size:${tx.size || 16}px;color:${colorOf(vc, tx.color || 'dk1')};font-weight:${tx.bold ? 700 : 400};${tx.italic ? 'font-style:italic;' : ''}${tx.wrap === false ? 'white-space:pre;' : ''}line-height:${ls}">${field || paras}</div>`;
 }
 function lineDash(d, w) { return d === 'dash' ? `${w * 4} ${w * 3}` : d === 'dot' ? `${w} ${w * 2}` : d === 'dashDot' ? `${w * 4} ${w * 2} ${w} ${w * 2}` : d === 'longDash' ? `${w * 8} ${w * 3}` : ''; }
+function rgba(c, a) { const h = String(c).replace('#', ''); if (!/^[0-9a-f]{6}$/i.test(h)) return c; return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a ?? 1})`; }
+// gradient fill: linear (angle in degrees, clockwise from left->right like PowerPoint) or radial from the centre
+function gradientDef(vc, g, id) {
+  const stops = [...(g.stops || [])].sort((a, b) => a.pos - b.pos).map(s => `<stop offset="${(s.pos * 100).toFixed(1)}%" stop-color="${colorOf(vc, s.color)}" stop-opacity="${s.alpha ?? 1}"/>`).join('');
+  if (g.type === 'radial') return `<radialGradient id="${id}" cx="50%" cy="50%" r="70%">${stops}</radialGradient>`;
+  const a = (g.angle ?? 90) * Math.PI / 180, dx = Math.cos(a) / 2, dy = Math.sin(a) / 2;
+  return `<linearGradient id="${id}" x1="${0.5 - dx}" y1="${0.5 - dy}" x2="${0.5 + dx}" y2="${0.5 + dy}">${stops}</linearGradient>`;
+}
 function shapeSvg(vc, e) {
   const w = Math.max(1, e.w), h = Math.max(1, e.h), ln = e.line, sw = ln && ln.color ? (ln.width || 1) : 0;
-  const d = shapePath(e.shape || 'rect', w, h, e.radius);
-  const fill = e.fill ? colorOf(vc, e.fill) : 'none';
-  return `<svg class="shp" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" overflow="visible"><path d="${d}" fill="${fill}" fill-opacity="${e.fillOpacity ?? 1}" fill-rule="evenodd" ${sw ? `stroke="${colorOf(vc, ln.color)}" stroke-width="${sw}" stroke-dasharray="${lineDash(ln.dash, sw)}"` : ''}/></svg>`;
+  const d = shapePath(e.shape || 'rect', w, h, e.radius, e.geom);
+  let fill = e.fill ? colorOf(vc, e.fill) : 'none', defs = '';
+  if (e.gradient && e.gradient.stops && e.gradient.stops.length) { const id = 'g' + Math.random().toString(36).slice(2, 8); defs = `<defs>${gradientDef(vc, e.gradient, id)}</defs>`; fill = `url(#${id})`; }
+  return `<svg class="shp" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" overflow="visible">${defs}<path d="${d}" fill="${fill}" fill-opacity="${e.fillOpacity ?? 1}" fill-rule="evenodd" ${sw ? `stroke="${colorOf(vc, ln.color)}" stroke-width="${sw}" stroke-dasharray="${lineDash(ln.dash, sw)}"` : ''}/></svg>`;
+}
+// PowerPoint-like effects as CSS filters: shadow (colour / blur / offset), glow, soft edge
+function effectFilter(vc, e) {
+  const f = [];
+  if (e.softEdge) f.push(`blur(${(e.softEdge * 0.45).toFixed(1)}px)`);
+  if (e.glow && e.glow.r) f.push(`drop-shadow(0 0 ${(e.glow.r * 0.6).toFixed(1)}px ${rgba(colorOf(vc, e.glow.color || '#FFFFFF'), e.glow.alpha ?? 0.6)})`);
+  if (e.shadow) { const s = e.shadowFx; f.push(s ? `drop-shadow(${s.dx || 0}px ${s.dy || 0}px ${((s.blur || 0) * 0.5).toFixed(1)}px ${rgba(colorOf(vc, s.color || '#000000'), s.alpha ?? 0.35)})` : 'drop-shadow(0 4px 8px rgba(0,0,0,.25))'); }
+  return f.length ? `filter:${f.join(' ')}` : '';
 }
 function lineSvg(vc, e) {
   const w = Math.max(1, Math.abs(e.w)), h = Math.max(1, Math.abs(e.h)), ln = e.line || {}, sw = ln.width || 2, col = colorOf(vc, ln.color || 'dk1');
@@ -150,7 +178,7 @@ function elementHtml(vc, e, opts = {}) {
   const st = [`left:${e.x}px`, `top:${e.y}px`, `width:${Math.max(1, e.w)}px`, `height:${Math.max(1, e.h)}px`];
   if (tf.length) st.push(`transform:${tf.join(' ')}`);
   if (e.opacity != null && e.opacity < 1) st.push(`opacity:${e.opacity}`);
-  if (e.shadow) st.push('filter:drop-shadow(0 4px 8px rgba(0,0,0,.25))');
+  const fx = effectFilter(vc, e); if (fx) st.push(fx);
   if (opts.hidden) st.push('visibility:hidden');
   let inner = '';
   const counter = e.flipH || e.flipV ? `style="transform:${e.flipH ? 'scaleX(-1)' : ''} ${e.flipV ? 'scaleY(-1)' : ''}"` : '';

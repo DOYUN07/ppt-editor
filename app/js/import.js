@@ -83,6 +83,7 @@ function textFromImport(sh, s) {
   let ls = 1.0; if (p0.ls > 0) ls = p0.lsRule === -1 ? p0.ls : p0.ls / ((p0.size || 18) * 1.2);
   const tx = { paras, size: first.size || 18, color: 'dk1', font: 'body', bold: false, align: (paras[0] && paras[0].align) || 'left', valign: { 1: 'top', 3: 'middle', 4: 'bottom' }[st.valign] || 'top', lineSpacing: Math.round(Math.min(3, Math.max(0.7, ls)) * 100) / 100, pad: (st.pad || [3.6, 7.2, 3.6, 7.2]).map(v => v * s) };
   if (st.nowrap) tx.wrap = false;
+  tx.fitPpt = true;
   return tx;
 }
 // fonts used by the imported runs that this PC does not have
@@ -116,8 +117,10 @@ function offerFontSwap(missing) {
   };
 }
 // exported pictures already carry rotation/flip/crop; rotated ones come out at their rotated outline size
-function exportedBox(sh, g, s, k) {
+function exportedBox(sh, g, s, k, ox, oy) {
   const st = sh.style || {};
+  // cut-outs carry their exact drawn bounds (already rotated / flipped)
+  if (sh.snapBox) { const [x, y, w, h] = sh.snapBox; return { x: ox + x * s, y: oy + y * s, w: w * s, h: h * s }; }
   if (!st.rot || !sh.px || !k) return g;
   const w = sh.px[0] / k * s, h = sh.px[1] / k * s, cx = g.x + g.w / 2, cy = g.y + g.h / 2;
   return { x: cx - w / 2, y: cy - h / 2, w, h };
@@ -137,19 +140,26 @@ async function freeImport() {
       const common = Object.assign({ id: uid(), z: z++ }, g); if (st.rot) common.rot = st.rot; if (st.flipH) common.flipH = true; if (st.flipV) common.flipV = true; if (st.shadow) common.shadow = true;
       const line = st.line && st.line.width > 0 ? { color: '#' + st.line.color, width: Math.round(st.line.width * s * 10) / 10, dash: DASH_MAP[st.line.dash] || 'solid' } : null;
       const exported = sh.snap || (sh.kind === 'picture' && sh.image);
-      if (exported) { const o = Object.assign({ id: common.id, z: common.z }, exportedBox(sh, g, s, k)); if (st.shadow) o.shadow = true;
+      if (exported) { const o = Object.assign({ id: common.id, z: common.z }, exportedBox(sh, g, s, k, ox, oy)); if (st.shadow && !sh.snapBox) o.shadow = true;
         extra.push(Object.assign(o, { kind: 'image', image: { src: impPath(exported), url: impUrl('media', exported), fit: 'stretch' } })); return; }
       if (sh.kind === 'picture') { skipped++; return; }
       if (sh.kind === 'table' && sh.table && sh.table.length) { const nc = sh.table[0].length; extra.push(Object.assign(common, { kind: 'table', table: { rows: sh.table, header: true, colW: Array.from({ length: nc }, () => g.w / nc), fontSize: 13, headerFill: 'dk2', headerColor: 'lt1', bandFill: 'lt2', bodyFill: 'lt1', color: 'dk1', banded: true, firstColBold: false } })); return; }
       if (sh.kind === 'chart') { if (sh.categories && sh.categories.length) extra.push(Object.assign(common, { kind: 'chart', chart: { type: chartKind(sh.chartType), categories: sh.categories, series: [Object.assign({ name: sh.seriesName || '값', values: sh.values || [] }, sh.seriesColor && !/pie|doughnut/.test(chartKind(sh.chartType)) ? { color: '#' + sh.seriesColor } : {})],
         showValues: sh.labels !== false, highlight: -1, ...(sh.pointColors ? { pointColors: sh.pointColors.map(c => '#' + c) } : {}), ...(sh.axisMin != null ? { axisMin: sh.axisMin } : {}), ...(sh.axisMax != null ? { axisMax: sh.axisMax } : {}), ...(sh.numFmt && sh.numFmt !== 'General' ? { numFmt: sh.numFmt } : {}), ...(sh.valueAxis === false ? { valueAxis: false } : {}), ...(sh.gridlines === false ? { gridlines: false } : {}) } })); else skipped++; return; }
       if (sh.kind === 'line') { extra.push(Object.assign(common, { kind: 'line', line: Object.assign({ color: '#000000', width: 1 }, line || {}, { end: st.line && st.line.endArrow > 1 ? 'arrow' : 'none', start: st.line && st.line.beginArrow > 1 ? 'arrow' : 'none' }) })); return; }
-      const shapeName = AST_TO_SHAPE[st.ast] || 'rect';
-      const hasFrame = st.fill || line || (st.ast && st.ast !== 1);
+      // outline: editor preset, or the exact path read from the file (block arc, teardrop, freeform ...)
+      const shapeName = sh.geom ? 'custom' : AST_TO_SHAPE[st.ast] || 'rect';
+      const hasFrame = st.fill || line || st.gradient || sh.geom || (st.ast && st.ast !== 1 && st.ast !== 138);
       const tx = sh.kind === 'text' ? textFromImport(sh, s) : null;
       if (tx && !hasFrame) { const e = Object.assign(common, { kind: 'text', text: tx }); if (sh.ph === 1 || sh.ph === 3) e.isTitle = true; extra.push(e); return; }
       const e = Object.assign(common, { kind: 'shape', shape: shapeName, fill: st.fill ? '#' + st.fill : null, line });
+      if (sh.geom) e.geom = sh.geom;
       if (st.fillAlpha != null) e.fillOpacity = st.fillAlpha; if (st.radius != null) e.radius = st.radius;
+      // effects stay editable values
+      if (st.gradient) e.gradient = { type: st.gradient.type, angle: st.gradient.angle ?? 90, stops: st.gradient.stops.map(g => ({ pos: g.pos, color: '#' + g.color, alpha: g.alpha })).sort((a, b) => a.pos - b.pos) };
+      if (st.shadowFx) { const f = st.shadowFx; e.shadow = true; e.shadowFx = { color: '#' + f.color, alpha: f.alpha, blur: f.blur * s, dx: f.dx * s, dy: f.dy * s }; }
+      if (st.glow) e.glow = { r: st.glow.r * s, color: '#' + st.glow.color, alpha: st.glow.alpha };
+      if (st.softEdge) e.softEdge = st.softEdge * s;
       if (tx) e.text = tx;
       extra.push(e);
     });

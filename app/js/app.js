@@ -304,7 +304,9 @@ function parseEditor(tx, base) {
       if (n.nodeType !== 1 || n.classList.contains('bul')) return;
       if (n.tagName === 'BR') { p.runs.push(Object.assign({ t: '\n' }, st)); return; }
       const s2 = Object.assign({}, st), cs = n.style;
-      if (n.tagName === 'B' || n.tagName === 'STRONG' || /^(bold|[6-9]00)$/.test(cs.fontWeight)) s2.b = true; else if (cs.fontWeight && /^(normal|[1-4]00)$/.test(cs.fontWeight)) s2.b = false;
+      // a weight that only comes from a named font face ('Paperlogy 7 Bold') is not the bold toggle
+      const ffw = fontWeightOf((cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim()), cw = cs.fontWeight === 'bold' ? 700 : cs.fontWeight === 'normal' ? 400 : +cs.fontWeight;
+      if (n.tagName === 'B' || n.tagName === 'STRONG' || (cw >= 600 && !(ffw && cw === ffw))) s2.b = true; else if (cs.fontWeight && (cw <= 400 || (ffw && cw === ffw))) s2.b = false;
       if (n.tagName === 'I' || n.tagName === 'EM' || cs.fontStyle === 'italic') s2.i = true;
       const deco = (cs.textDecorationLine || cs.textDecoration || '') + ' ' + (n.tagName === 'U' ? 'underline' : '') + ' ' + (n.tagName === 'S' || n.tagName === 'STRIKE' ? 'line-through' : '');
       if (/underline/.test(deco) && !n.closest('[data-link]')) s2.u = true; if (/line-through/.test(deco)) s2.s = true;
@@ -477,7 +479,7 @@ function renderCtx() {
   }
   if (els.length === 1) {
     const e = e0;
-    if (e.kind === 'shape' || e.kind === 'text') bar.append(Object.assign(document.createElement('span'), { className: 'lbl', textContent: '채우기' }), colorButton(e.fill, c => { snap(); patchEl(e.id, { fill: c || null }); renderSoft(); }, { allowNone: true, title: '채우기 색' }));
+    if (e.kind === 'shape' || e.kind === 'text') bar.append(Object.assign(document.createElement('span'), { className: 'lbl', textContent: '채우기' }), colorButton(e.fill, c => { snap(); patchEl(e.id, { fill: c || null, gradient: undefined }); renderSoft(); }, { allowNone: true, title: '채우기 색' }));
     if (['shape', 'text', 'image', 'line'].includes(e.kind)) {
       bar.append(Object.assign(document.createElement('span'), { className: 'lbl', textContent: e.kind === 'line' ? '선' : '테두리' }), colorButton(e.line && e.line.color, c => { snap(); patchEl(e.id, { line: c ? Object.assign({ width: e.kind === 'line' ? 2 : 1.5 }, e.line, { color: c }) : null }); renderSoft(); }, { allowNone: e.kind !== 'line', title: '선 색' }));
       const lw = document.createElement('select'); lw.title = '선 굵기'; lw.innerHTML = [0.5, 1, 1.5, 2, 3, 4, 6, 8].map(v => `<option value="${v}">${v}pt</option>`).join(''); lw.value = String((e.line && e.line.width) || (e.kind === 'line' ? 2 : 1)); lw.onchange = () => { snap(); patchEl(e.id, { line: Object.assign({ color: 'dk1' }, e.line, { width: +lw.value }) }); renderSoft(); };
@@ -614,9 +616,14 @@ function renderProps() {
   if (e.kind !== 'line' && e.kind !== 'table') row.append(tbtn('그림자', '그림자', () => { snap(); patchEl(e.id, { shadow: e.shadow ? undefined : true }); renderSoft(); }, e.shadow));
   p.append(row);
   if (e.kind === 'shape' || (e.kind === 'image')) {
-    const ss = document.createElement('select'); ss.innerHTML = (e.kind === 'image' ? [['rect', '사각형'], ['roundRect', '둥근 사각형'], ['ellipse', '원'], ['hexagon', '육각형'], ['diamond', '마름모'], ['triangle', '삼각형'], ['star5', '별'], ['heart', '하트'], ['cloud', '구름']] : SHAPE_LIST).map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+    const ss = document.createElement('select'); ss.innerHTML = (e.geom ? [['custom', '원본 모양 (가져온 도형)']] : []).concat(e.kind === 'image' ? [['rect', '사각형'], ['roundRect', '둥근 사각형'], ['ellipse', '원'], ['hexagon', '육각형'], ['diamond', '마름모'], ['triangle', '삼각형'], ['star5', '별'], ['heart', '하트'], ['cloud', '구름']] : SHAPE_LIST).map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
     ss.value = e.shape || 'rect'; ss.onchange = () => { snap(); patchEl(e.id, { shape: ss.value }); renderSoft(); };
     p.append(field(e.kind === 'image' ? '사진 모양' : '도형 모양', ss));
+    // effects brought in from PowerPoint: show what is applied and allow removing it
+    const fxRow = document.createElement('div'); fxRow.className = 'row'; fxRow.style.cssText = 'margin-top:6px;flex-wrap:wrap;gap:4px';
+    const fxBtn = (on, label, patch) => { if (on) fxRow.append(tbtn(label + ' ✕', label + ' 없애기', () => { snap(); patchEl(e.id, patch); renderSoft(); renderProps(); })); };
+    fxBtn(e.gradient, '그라데이션', { gradient: undefined }); fxBtn(e.glow, '네온', { glow: undefined }); fxBtn(e.softEdge, '부드러운 가장자리', { softEdge: undefined });
+    if (fxRow.childNodes.length) p.append(fxRow);
     if ((e.shape || 'rect') === 'roundRect' || e.shape === 'snipRect' || e.shape === 'round2Same' || e.shape === 'callout') { const rr = document.createElement('input'); rr.type = 'range'; rr.min = 0; rr.max = 0.5; rr.step = 0.02; rr.value = e.radius ?? 0.12; rr.onchange = () => { snap(); patchEl(e.id, { radius: +rr.value }); renderSoft(); }; p.append(field('모서리 둥글기', rr)); }
   }
   if (e.kind === 'image') {

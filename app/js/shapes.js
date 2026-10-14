@@ -21,9 +21,15 @@ function regular(w, h, n, rot) {
   return poly(pts);
 }
 function rrect(w, h, r) { r = Math.min(r, w / 2, h / 2); return `M${r} 0 H${w - r} A${r} ${r} 0 0 1 ${w} ${r} V${h - r} A${r} ${r} 0 0 1 ${w - r} ${h} H${r} A${r} ${r} 0 0 1 0 ${h - r} V${r} A${r} ${r} 0 0 1 ${r} 0 Z`; }
-function shapePath(type, w, h, radius) {
+// custom outline stored as "M x y L x y C x1 y1 x2 y2 x y Z" in frame units (0..1) — scales with the element
+function geomPath(geom, w, h) {
+  let i = 0;
+  return String(geom || '').replace(/-?\d*\.?\d+(?:e-?\d+)?/gi, n => f1(+n * (i++ % 2 ? h : w)));
+}
+function shapePath(type, w, h, radius, geom) {
   const m = Math.min(w, h), r = (radius == null ? 0.12 : radius) * m;
   switch (type) {
+    case 'custom': return geom ? geomPath(geom, w, h) : `M0 0 H${w} V${h} H0 Z`;
     case 'roundRect': return rrect(w, h, r);
     case 'ellipse': return `M${w / 2} 0 A${w / 2} ${h / 2} 0 1 1 ${w / 2 - 0.01} 0 Z`;
     case 'triangle': return poly([[w / 2, 0], [w, h], [0, h]]);
