@@ -39,8 +39,35 @@ function SafeName([string]$n) { $n = ($n -replace '[\\/:*?"<>|\r\n]', '_').Trim(
 function RawOr([string]$path, [string]$fallback) { if (Test-Path -LiteralPath $path) { return (ReadText $path) } else { return $fallback } }
 function IsUnder([string]$path, [string]$root) { $full = [IO.Path]::GetFullPath($path); return $full.StartsWith([IO.Path]::GetFullPath($root).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) }
 function JStr([string]$s) { return (ConvertTo-Json -InputObject $s) }
+# Query values decoded as UTF-8 (HttpListener's QueryString garbles non-ASCII names such as Korean file names).
+function QS($ctx, [string]$key) {
+  foreach ($pair in $ctx.Request.Url.Query.TrimStart('?').Split('&')) { $kv = $pair.Split('=', 2); if ($kv.Count -eq 2 -and [Uri]::UnescapeDataString($kv[0]) -eq $key) { return [Uri]::UnescapeDataString($kv[1].Replace('+', ' ')) } }
+  return ''
+}
 
 $FontsJson = ConvertTo-Json -InputObject @((New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name } | Where-Object { -not $_.StartsWith('@') } | Sort-Object -Unique) -Compress
+# Localized family names (e.g. '페이퍼로지 6 SemiBold') -> the name browsers know ('Paperlogy 6 SemiBold').
+# Files saved on Korean Office store the Korean name, which the browser cannot resolve. Built on first use (a few seconds).
+$script:FontAliasJson = $null
+function FontAlias {
+  if ($script:FontAliasJson) { return $script:FontAliasJson }
+  Add-Type -AssemblyName PresentationCore
+  $map = @{}; $all = New-Object 'System.Collections.Generic.HashSet[string]'
+  $dirs = @("$env:windir\Fonts", "$env:LOCALAPPDATA\Microsoft\Windows\Fonts")
+  foreach ($f in (Get-ChildItem $dirs -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '^\.(ttf|otf|ttc)$' })) {
+    try {
+      $g = New-Object Windows.Media.GlyphTypeface ([Uri]$f.FullName)
+      $names = $g.Win32FamilyNames; $en = $null
+      foreach ($kv in $names.GetEnumerator()) { if ($kv.Key.Name -eq 'en-US') { $en = $kv.Value } }
+      if (-not $en) { continue }
+      foreach ($kv in $names.GetEnumerator()) { [void]$all.Add($kv.Value); if ($kv.Value -ne $en -and -not $map.ContainsKey($kv.Value)) { $map[$kv.Value] = $en } }
+    } catch {}
+  }
+  $aliasJson = if ($map.Count) { ConvertTo-Json -InputObject $map -Compress } else { '{}' }
+  # names: every installed family name in any language, to tell which fonts of an imported file are missing
+  $script:FontAliasJson = '{"alias":' + $aliasJson + ',"names":' + (ConvertTo-Json -InputObject @($all) -Compress) + '}'
+  return $script:FontAliasJson
+}
 
 # Make an all-white copy of a transparent logo for dark backgrounds. Returns $null if the image has no transparency.
 function WhiteVersion([string]$src, [string]$dst) {
@@ -74,7 +101,7 @@ function ImageAspect([string]$path) {
 
 function Upload($ctx) {
   $q = $ctx.Request.QueryString
-  $orig = [string]$q['name']; $kind = [string]$q['kind']
+  $orig = QS $ctx 'name'; $kind = QS $ctx 'kind'
   $ext = [IO.Path]::GetExtension($orig).ToLower()
   $allowed = @('.png','.jpg','.jpeg','.gif','.bmp'); if ($kind -eq 'logo') { $allowed += '.svg' }
   if ($allowed -notcontains $ext) { SendJson $ctx @{ error = "지원하지 않는 형식: $ext" } 400; return }
@@ -135,8 +162,54 @@ function UniqueOut([string]$name) {
   while (Test-Path -LiteralPath $out) { $out = Join-Path $OutDir ("$name-$i.pptx"); $i++ }
   return $out
 }
+# Windows PowerShell's ConvertFrom-Json hands back a JSON array as one object, and ConvertTo-Json wraps nested
+# arrays as {value, Count}; flatten both so history.json stays a plain list of entries.
+function FlatHistory($node) {
+  $out = @()
+  foreach ($h in @($node)) {
+    if ($null -eq $h) { continue }
+    if ($h -is [array]) { $out += @(FlatHistory $h) }
+    elseif ($h.PSObject.Properties['value'] -and $h.PSObject.Properties['Count'] -and -not $h.PSObject.Properties['date']) { $out += @(FlatHistory $h.value) }
+    elseif ($h -is [string]) { continue }
+    else { $out += $h }
+  }
+  return $out
+}
+function RenderDoc($ctx) {
+  $req = (BodyText $ctx) | ConvertFrom-Json
+  $name = SafeName ([string]$req.fileName)
+  $jobName = (Get-Date -Format 'yyyyMMdd-HHmmss')
+  $job = Join-Path $WorkRoot $jobName
+  New-Item -ItemType Directory -Force $job | Out-Null
+  WriteText (Join-Path $job 'doc.json') ([string]$req.docJson)
+  # overwrite an earlier file with the same name unless it is open in PowerPoint
+  $out = Join-Path $OutDir ($name + '.pptx'); $i = 2
+  while (Test-Path -LiteralPath $out) { try { $fs = [IO.File]::Open($out, 'Open', 'ReadWrite', 'None'); $fs.Close(); break } catch { $out = Join-Path $OutDir ("$name-$i.pptx"); $i++ } }
+  $args2 = @('-Doc', (Join-Path $job 'doc.json'), '-Out', $out, '-PngDir', (Join-Path $job 'png'))
+  if ($req.potx) { $args2 += '-Potx' }
+  if ($req.pdf) { $args2 += '-Pdf' }
+  Write-Host ("[render] " + $name + " ...")
+  $log = RunEngine 'render.ps1' $args2 (Join-Path $job 'render')
+  $ok = ($log -match '(?m)^OK ')
+  $pngs = @(); if (Test-Path (Join-Path $job 'png')) { $pngs = @(Get-ChildItem (Join-Path $job 'png') -Filter 'slide-*.png' | Sort-Object Name | ForEach-Object { "/png/$jobName/" + $_.Name }) }
+  if ($ok -and $req.styleJson) {
+    # layout history keeps the next recommendation different (shared with the varied-ppt skill)
+    try {
+      $st = ([string]$req.styleJson) | ConvertFrom-Json
+      $hist = @(); if (Test-Path $HistoryPath) { $hist = @(FlatHistory ((ReadText $HistoryPath) | ConvertFrom-Json)) }
+      $entry = [ordered]@{ date = (Get-Date -Format 'yyyy-MM-dd HH:mm'); deck = $name; style = [string]$st.name }
+      foreach ($k in 'cover','coverTitle','mirror','titleAlign','kicker','motif','contentBg','agenda','cards','stats','process') { $entry[$k] = $st.$k }
+      if ($req.brand) { $entry.dk2 = [string]$req.brand.dk2; $entry.accent1 = [string]$req.brand.accent1; $entry.headFont = [string]$req.brand.headFont }
+      $hist += [pscustomobject]$entry
+      if ($hist.Count -gt 30) { $hist = $hist[($hist.Count - 30)..($hist.Count - 1)] }
+      WriteText $HistoryPath (ConvertTo-Json -InputObject @($hist) -Depth 4)
+    } catch { Write-Host "[render] history: $_" }
+  }
+  Write-Host ("[render] " + $(if ($ok) { 'OK ' + $out } else { 'FAILED' }))
+  SendJson $ctx ([ordered]@{ ok = [bool]$ok; out = $out; potx = $(if ($req.potx) { [IO.Path]::ChangeExtension($out, '.potx') } else { $null }); pdf = $(if ($req.pdf) { [IO.Path]::ChangeExtension($out, '.pdf') } else { $null }); pngs = $pngs; log = $log })
+}
 function ImportDeck($ctx) {
-  $orig = [string]$ctx.Request.QueryString['name']
+  $orig = QS $ctx 'name'
   $ext = [IO.Path]::GetExtension($orig).ToLower()
   if (@('.pptx', '.ppt', '.potx', '.pptm') -notcontains $ext) { SendJson $ctx @{ error = "PowerPoint 파일(.pptx, .ppt)만 가져올 수 있어요." } 400; return }
   $bytes = BodyBytes $ctx
@@ -207,11 +280,14 @@ while ($listener.IsListening) {
     }
     elseif ($path -eq '/api/brands' -and $method -eq 'POST') { WriteText $BrandsPath (BodyText $ctx); SendJson $ctx @{ ok = $true } }
     elseif ($path -eq '/api/project' -and $method -eq 'GET') {
-      $f = Join-Path $ProjDir ((SafeName $q['name']) + '.json'); if (Test-Path -LiteralPath $f) { SendRaw $ctx (ReadText $f) } else { SendJson $ctx @{ error = 'not found' } 404 }
+      $f = Join-Path $ProjDir ((SafeName (QS $ctx 'name')) + '.json'); if (Test-Path -LiteralPath $f) { SendRaw $ctx (ReadText $f) } else { SendJson $ctx @{ error = 'not found' } 404 }
     }
-    elseif ($path -eq '/api/project' -and $method -eq 'POST') { WriteText (Join-Path $ProjDir ((SafeName $q['name']) + '.json')) (BodyText $ctx); SendJson $ctx @{ ok = $true } }
+    elseif ($path -eq '/api/project' -and $method -eq 'POST') { WriteText (Join-Path $ProjDir ((SafeName (QS $ctx 'name')) + '.json')) (BodyText $ctx); SendJson $ctx @{ ok = $true } }
+    elseif ($path -eq '/api/fontalias') { SendRaw $ctx (FontAlias) }
     elseif ($path -eq '/api/upload' -and $method -eq 'POST') { Upload $ctx }
     elseif ($path -eq '/api/build' -and $method -eq 'POST') { Build $ctx }
+    elseif ($path -eq '/api/render' -and $method -eq 'POST') { RenderDoc $ctx }
+    elseif ($path -match '^/js/([a-z]+\.js)$') { SendFile $ctx (Join-Path $AppDir ('app\js\' + $Matches[1])) }
     elseif ($path -eq '/api/import' -and $method -eq 'POST') { ImportDeck $ctx }
     elseif ($path -eq '/api/apply' -and $method -eq 'POST') { ApplyEdits $ctx }
     elseif ($path -match '^/imports/([0-9a-f\-]+)/((result-\d+/)?(png|media))/([A-Za-z0-9_\-]+\.png)$') { SendFile $ctx (Join-Path $ImpDir ($Matches[1] + '\' + $Matches[2].Replace('/', '\') + '\' + $Matches[5])) }
