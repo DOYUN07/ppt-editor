@@ -59,6 +59,16 @@ function Stage([string]$p) {
 function WriteSvg([string]$svg) { $f = Join-Path $tmp ('icon-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.svg'); [IO.File]::WriteAllText($f, $svg, (New-Object Text.UTF8Encoding $false)); return $f }
 
 function ApplyFill($sh, $e) {
+  $gr = Get $e 'gradient' $null
+  if ($gr -and @($gr.stops).Count -ge 2) {
+    $sh.Fill.Visible = -1
+    $sh.Fill.TwoColorGradient($(if ([string](Get $gr 'type' 'linear') -eq 'radial') { 7 } else { 1 }), 1)
+    $gs = $sh.Fill.GradientStops; $n0 = $gs.Count
+    foreach ($s in @($gr.stops)) { $gs.Insert((RGBc (HexOf ([string]$s.color))), [single](Get $s 'pos' 0), [single](1 - [double](Get $s 'alpha' 1))) }
+    for ($i = 0; $i -lt $n0; $i++) { $gs.Delete(1) }
+    if ([string](Get $gr 'type' 'linear') -ne 'radial') { try { $sh.Fill.GradientAngle = [single](Get $gr 'angle' 90) } catch {} }
+    return
+  }
   if (Has $e 'fill') {
     $sh.Fill.Visible = -1; $sh.Fill.Solid(); SetColor $sh.Fill.ForeColor ([string]$e.fill)
     $op = [double](Get $e 'fillOpacity' 1); if ($op -lt 1) { $sh.Fill.Transparency = [single](1 - $op) }
@@ -75,9 +85,59 @@ function ApplyCommon($sh, $e) {
   if (IsTrue (Get $e 'flipH' $false)) { $sh.Flip(0) }
   if (IsTrue (Get $e 'flipV' $false)) { $sh.Flip(1) }
   if (IsTrue (Get $e 'shadow' $false)) {
-    $sh.Shadow.Visible = -1; $sh.Shadow.ForeColor.RGB = 0; $sh.Shadow.OffsetX = 0; $sh.Shadow.OffsetY = 4; $sh.Shadow.Blur = 12; $sh.Shadow.Transparency = 0.75
+    $fx = Get $e 'shadowFx' $null
+    if ($fx) { $sh.Shadow.Visible = -1; $sh.Shadow.ForeColor.RGB = (RGBc (HexOf ([string](Get $fx 'color' '#000000')))); $sh.Shadow.OffsetX = [single](Get $fx 'dx' 0); $sh.Shadow.OffsetY = [single](Get $fx 'dy' 4); $sh.Shadow.Blur = [single](Get $fx 'blur' 12); $sh.Shadow.Transparency = [single](1 - [double](Get $fx 'alpha' 0.25)) }
+    else { $sh.Shadow.Visible = -1; $sh.Shadow.ForeColor.RGB = 0; $sh.Shadow.OffsetX = 0; $sh.Shadow.OffsetY = 4; $sh.Shadow.Blur = 12; $sh.Shadow.Transparency = 0.75 }
   } else { try { $sh.Shadow.Visible = 0 } catch {} }
+  $gl = Get $e 'glow' $null
+  if ($gl) { try { $sh.Glow.Radius = [single](Get $gl 'r' 6); $sh.Glow.Color.RGB = (RGBc (HexOf ([string](Get $gl 'color' '#FFFFFF')))); $sh.Glow.Transparency = [single](1 - [double](Get $gl 'alpha' 0.6)) } catch {} }
+  if (Has $e 'softEdge') { try { $sh.SoftEdge.Radius = [single]$e.softEdge } catch {} }
   if (Has $e 'name') { try { $sh.Name = [string]$e.name } catch {} }
+}
+# Imported outline ("M x y L x y C ... Z", frame units 0..1) -> freeform shape(s). Rotation/flip are applied to the
+# points around the frame centre (as PowerPoint does), several sub-paths are combined so holes stay holes.
+function DrawGeom($slide, $e) {
+  $x0 = [double]$e.x; $y0 = [double]$e.y; $w = [double]$e.w; $h = [double]$e.h; $cx = $x0 + $w / 2; $cy = $y0 + $h / 2
+  $rad = [double](Get $e 'rot' 0) * [math]::PI / 180; $cos = [math]::Cos($rad); $sin = [math]::Sin($rad)
+  $fh = IsTrue (Get $e 'flipH' $false); $fv = IsTrue (Get $e 'flipV' $false)
+  $tp = { param($nx, $ny)
+    $px = $x0 + $nx * $w; $py = $y0 + $ny * $h
+    if ($fh) { $px = 2 * $cx - $px }; if ($fv) { $py = 2 * $cy - $py }
+    $dx = $px - $cx; $dy = $py - $cy
+    return @([single]($cx + $dx * $cos - $dy * $sin), [single]($cy + $dx * $sin + $dy * $cos)) }
+  $tokens = [regex]::Matches([string]$e.geom, '[MLCZ]|-?\d*\.?\d+(?:[eE]-?\d+)?') | ForEach-Object Value
+  $inv = [Globalization.CultureInfo]::InvariantCulture
+  $subs = @(); $cur = $null; $i = 0
+  while ($i -lt $tokens.Count) {
+    $t = $tokens[$i]; $i++
+    switch ($t) {
+      'M' { $cur = [System.Collections.ArrayList]@(); $subs += ,$cur; [void]$cur.Add(@('M', (& $tp ([double]::Parse($tokens[$i], $inv)) ([double]::Parse($tokens[$i + 1], $inv))))); $i += 2 }
+      'L' { [void]$cur.Add(@('L', (& $tp ([double]::Parse($tokens[$i], $inv)) ([double]::Parse($tokens[$i + 1], $inv))))); $i += 2 }
+      'C' { $p = @(); for ($k = 0; $k -lt 3; $k++) { $p += ,(& $tp ([double]::Parse($tokens[$i], $inv)) ([double]::Parse($tokens[$i + 1], $inv))); $i += 2 }; [void]$cur.Add(@('C', $p)) }
+      'Z' { }
+    }
+  }
+  $made = @()
+  foreach ($sp in $subs) {
+    if ($sp.Count -lt 2) { continue }
+    $start = $sp[0][1]
+    $ff = $slide.Shapes.BuildFreeform(1, $start[0], $start[1])
+    $last = $start
+    for ($k = 1; $k -lt $sp.Count; $k++) {
+      $seg = $sp[$k]
+      if ($seg[0] -eq 'L') { $ff.AddNodes(0, 1, $seg[1][0], $seg[1][1]); $last = $seg[1] }
+      else { $p = $seg[1]; $ff.AddNodes(1, 1, $p[0][0], $p[0][1], $p[1][0], $p[1][1], $p[2][0], $p[2][1]); $last = $p[2] }
+    }
+    if ([math]::Abs($last[0] - $start[0]) -gt 0.01 -or [math]::Abs($last[1] - $start[1]) -gt 0.01) { $ff.AddNodes(0, 1, $start[0], $start[1]) }
+    $made += $ff.ConvertToShape()
+  }
+  if ($made.Count -eq 0) { throw 'empty outline' }
+  if ($made.Count -eq 1) { return $made[0] }
+  $names = @(); foreach ($m in $made) { $m.Name = '__part_' + [guid]::NewGuid().ToString('N'); $names += $m.Name }
+  $before = @{}; foreach ($s in $slide.Shapes) { $before[[int]$s.Id] = 1 }
+  $slide.Shapes.Range([object[]]$names).MergeShapes(2, $made[0])   # combine: overlapping parts become holes
+  foreach ($s in $slide.Shapes) { if (-not $before.ContainsKey([int]$s.Id)) { return $s } }
+  throw 'merge failed'
 }
 function FontFor([string]$f) { if ($f -eq 'head') { return '+mj-lt' } ; if ($f -eq 'body' -or -not $f) { return '+mn-lt' }; return $f }
 function SetFont($font, [string]$f) {
@@ -339,7 +399,13 @@ try {
           }
           'shape' {
             $type = $SHAPES[[string](Get $e 'shape' 'rect')]; if (-not $type) { $type = 1 }
+            if ([string](Get $e 'shape' '') -eq 'custom' -and (Has $e 'geom')) {
+              # imported outline -> freeform; rotation and flips are baked into the points
+              $sh = DrawGeom $slide $e
+              $e = $e | Select-Object * -ExcludeProperty rot, flipH, flipV
+            } else {
             $sh = $slide.Shapes.AddShape($type, [single]$e.x, [single]$e.y, [single]$e.w, [single]$e.h)
+            }
             if ($type -eq 5 -or $type -eq 155 -or $type -eq 152) { $sh.Adjustments.Item(1) = [single](Get $e 'radius' 0.12) }
             ApplyFill $sh $e; ApplyLine $sh (Get $e 'line' $null)
             if ((Has $e 'text') -and @($e.text.paras).Count -gt 0) { FillText $sh $e.text $true }
